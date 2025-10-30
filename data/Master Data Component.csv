@@ -1,0 +1,480 @@
+,,,,,
+,,,MASTER DATA COMPONENT,,
+,,,,,
+,,,,,
+,No,Code,Name,Type,Notes
+,,,,,
+,,,,,
+,1,AL_BASICSALARY,Basic Salary Tambahan,Allowance,
+,2,AL_ADDSAL,Additional Salary,Allowance,
+,3,AL_ADDSAL_GROSS,Additional Salary Gross,Allowance,
+,4,AL_RAPEL_SALARY,Rapel Salary,Allowance,
+,5,AL_RAPEL_SALARY_GROSS,Rapel Salary Gross,Allowance,
+,6,AL_MAKAN,Uang Makan,Allowance,
+,7,AL_ADDMAKAN,Additional Uang Makan,Allowance,
+,8,AL_MAKANTRANS,Uang Makan & Transport,Allowance,Inactive
+,9,AL_MAKANBULANAN,Uang Makan Bulanan,Allowance,Inactive
+,10,AL_TRANS,Uang Transport,Allowance,Inactive
+,11,AL_ADDTRANS,Additional Uang Transport,Allowance,Inactive
+,12,AL_RAPEL_TRANS,Rapel Uang Transport,Allowance,Inactive
+,13,AL_JABATAN,Tunjangan Jabatan,Allowance,
+,14,AL_ADDTUNJJAB,Additional Tunjangan Jabatan,Allowance,
+,15,AL_RAPEL_JABATAN,Rapel Tunjangan Jabatan,Allowance,
+,16,AL_JABATAN_GROSS,Tunjangan Jabatan Gross,Allowance,
+,17,AL_ADDTUNJAB_GROSS,Additional Tunjangan Jabatan Gross,Allowance,
+,18,AL_RAPEL_JABATAN_GROSS,Rapel Tunjangan Jabatan Gross,Allowance,
+,19,AL_JABATANPJS,Tunjangan Jabatan PJS,Allowance,
+,20,AL_ADDTUNJANGANTEMPATTINGGAL,Additional Tunjangan Relokasi,Allowance,
+,21,AL_ADDREFUNDLOAN,Additional Refund Loan,Allowance,
+,22,AL_TUNJANGANTEMPATTINGGAL,Tunjangan Tempat Tinggal,Allowance,Inactive
+,23,AL_REWARD,Reward,Allowance,
+,24,Al_ADDREWARD,Additional Reward,Allowance,
+,25,AL_SISACUTI,Sisa Cuti Dibayarkan,Allowance,
+,26,AL_ADDSISACUTI,Additional Sisa Cuti Dibayarkan,Allowance,
+,27,AL_SISACUTI_GROSS,Sisa Cuti Dibayarkan Gross,Allowance,
+,28,AL_ADDSISACUTI_GROSS,Additional Sisa Cuti Dibayarkan Gross,Allowance,
+,29,AL_UANGPISAH,Tunjangan Uang Pisah,Allowance,Inactive
+,30,AL_UANGPISAH_GROSS,Uang Pisah Gross,Allowance,
+,31,AL_ADDUANGPISAH,Additional Uang Pisah,Allowance,
+,32,AL_BENSINHARIAN,Tunjangan Bensin Harian,Allowance,Inactive
+,33,AL_MAKANHARIAN,Tunjangan Makan Harian,Allowance,Inactive
+,34,NE_PYOPERATIONAL,Netral Operasional dibayar Payroll,Neutral,
+,35,AL_OPERATIONAL,Tunjangan Operasional,Allowance,
+,36,AL_ADDTUNJOPS,Additional Tunjangan Operational,Allowance,
+,37,AL_RAPEL_PYOPERATIONAL,Rapel Tunjangan Operational,Allowance,
+,38,AL_OPERASIONALHARIAN,Tunjangan Operasional Harian,Allowance,Inactive
+,39,AL_PENDIDIKAN,Tunjangan Pendidikan,Allowance,
+,40,AL_PULSAHARIAN,Tunjangan Pulsa Harian,Allowance,Inactive
+,41,AL_TUNJTRANSPORTCOM,Tunjangan Transport Commercial,Allowance,
+,42,AL_ADDTUNJTRANSPORTCOM,Additional Tunjangan Transport Commercial,Allowance,
+,43,AL_TUNVOLTA,Tunjangan Volta,Allowance,Inactive
+,44,AL_UJALANLINEHAUL,Uang Jalan - Line Haul,Allowance,Inactive
+,45,AL_KERAJINAN,Uang Kerajinan,Allowance,Inactive
+,46,AL_SERVISMOTOR,Service Motor,Allowance,Inactive
+,47,AL_SVC,Severence,Allowance,Inactive
+,48,AL_INSENTIF,Insentif,Allowance,
+,49,AL_INSENTIF_GROSS,Insentif Gross,Allowance,
+,50,AL_RAPEL_INSENTIF,Rapel Insentif,Allowance,
+,51,AL_ADDINS,Additional Insentif,Allowance,
+,52,AL_ADDINSKERAJINANMITRA,Additional Insentif Kerajinan Mitra,Allowance,Inactive
+,53,AL_ADDINSSORTERMITRA,Additional Insentif Sorter MItra,Allowance,
+,54,AL_INSMINGGU,Insentif Hari Minggu,Allowance,Inactive
+,55,AL_RAPEL_INSMINGGU_MT,Rapel Insentif Hari Minggu,Allowance,Inactive
+,56,AL_INSMINGGU_MT,Insentif Hari Minggu Mitra,Allowance,Inactive
+,57,AL_INSENTIFKEHADIRAN,Insentif Kehadiran,Allowance,Inactive
+,58,AL_INSKERAJINANMITRA,Insentif Kerajinan Mitra,Allowance,Inactive
+,59,AL_INSENTIFMITRA,Insentif Mitra,Allowance,
+,60,AL_ADDINSMITRA,Additional Insentif Mitra,Allowance,
+,61,AL_RAPEL_INSENTIFMITRA,Rapel Insentif Mitra,Allowance,
+,62,AL_INSENTIFMITRALAIN,Insentif Mitra Lain,Allowance,
+,63,AL_ADDINSENTIFMITRALAIN,Additional Insentif Mitra Lain,Allowance,
+,64,AL_RAPEL_INSENTIFMITRALAIN,Rapel Insentif Mitra Lain,Allowance,
+,65,AL_INSENTIFMITRASORTER,Insentif Mitra Sorter,Allowance,
+,66,AL_RAPEL_INSENTIFMITRASORTER,Rapel Insentif Mitra Sorter,Allowance,
+,67,AL_INSENTIFMITRA10Kg,Insentif Pembawaan Mitra 10 Kg,Allowance,
+,68,AL_BONUSKELIPATAN,Insentif Per Paket,Allowance,Inactive
+,69,AL_BONUSKELIPATAN_MT,Insentif Per Paket Mitra,Allowance,
+,70,AL_ADDBONUSKELIPATAN_MT,Additional Insentif Per Paket Mitra,Allowance,Inactive
+,71,AL_INSENTIFPERBANTUAN,Insentif Perbantuan,Allowance,
+,72,AL_ADDINSPERBANTUAN,Additional Insentif Perbantuan,Allowance,
+,73,AL_INSENTIFPERBANTUAN_MT,Insentif Perbantuan Mitra,Allowance,
+,74,AL_INSPRODMITRA,Insentif Produktifitas Mitra,Allowance,Inactive
+,75,AL_RAPEL_INSPRODMITRA,Rapel Insentif Produktifitas Mitra,Allowance,Inactive
+,76,AL_INSENTIFVOLTA,Insentif Volta,Allowance,Inactive
+,77,AL_KOMISIKARYAWAN,Komisi Karyawan,Allowance,Inactive
+,78,AL_ADDKOMISIKARYAWAN,Additional Komisi Karyawan,Allowance,
+,79,AL_TARGETPKT,Target Paket,Allowance,Inactive
+,80,AL_ADDTARGETPKT,Additional Target Paket,Allowance,Inactive
+,81,AL_RAPEL_TARGETPKT,Rapel Target Paket,Allowance,Inactive
+,82,AL_TARGETPKT_MT,Target Paket Mitra,Allowance,Inactive
+,83,AL_ADDTARGETPKT_MT,Additional Target Paket Mitra,Allowance,Inactive
+,84,AL_RAPEL_TARGETPKT_MT,Rapel Target Paket Mitra,Allowance,Inactive
+,85,AL_ADDEXTIMEMT,Additional Loyalty Fee Mitra,Allowance,Inactive
+,86,AL_EXTIMEMT,Loyalty Fee Mitra,Allowance,Inactive
+,87,AL_ADDREWARDMITRA,Additional Reward Mitra,Allowance,Inactive
+,88,AL_ADDREWARDMITRASMSTR,Additional Reward Mitra Semester,Allowance,Inactive
+,89,AL_REWARD_BEASISWA_MT,Reward Be A Star,Allowance,
+,90,AL_REWARD_MITRA,Reward Bulanan Mitra,Allowance,Inactive
+,91,AL_REWARDMITRASMSTR_MT,Reward Semester Mitra,Allowance,Inactive
+,92,AL_REWARDS,Rewards,Allowance,Inactive
+,93,AL_BONUS,Bonus,Allowance,
+,94,AL_ADDBNSCNS,Additional Bonus Carrot And Stick,Allowance,
+,95,AL_ADDBONUSCPP,Additional Bonus CPP,Allowance,Inactive
+,96,AL_ADDBNSPKT,Additional Bonus Paket,Allowance,Inactive
+,97,AL_RAPEL_BONUSPKT,Rapel Bonus Paket,Allowance,Inactive
+,98,AL_RAPEL_BONUSPKT_MT,Rapel Bonus Paket Mitra,Allowance,Inactive
+,99,AL_RAPEL_BONUSKELIPATAN,Rapel Bonus Per Paket,Allowance,Inactive
+,100,AL_RAPEL_BONUSKELIPATAN_MT,Rapel Bonus Per Paket Mitra,Allowance,Inactive
+,101,AL_BONUSCOD,Bonus COD,Allowance,Inactive
+,102,AL_RAPEL_BONUSCOD,Rapel Bonus COD,Allowance,Inactive
+,103,AL_BONUSCOD_MT,Bonus COD Mitra,Allowance,Inactive
+,104,AL_ADDBONUSCODMITRA,Additional Bonus COD Mitra,Allowance,Inactive
+,105,AL_RAPEL_BONUSCOD_MT,Rapel Bonus COD Mitra,Allowance,Inactive
+,106,AL_BONUSFIRSTLAST,Bonus First & Last,Allowance,Inactive
+,107,AL_BNSKPI,Bonus KPI,Allowance,
+,108,AL_ADDBNSKPI,Additional Bonus KPI,Allowance,
+,109,AL_BONUSMITRA,Bonus Mitra,Allowance,Inactive
+,110,AL_ADDBNSMITRA,Additional Bonus Mitra,Allowance,Inactive
+,111,AL_BONUSPKT,Bonus Paket Coordinator,Allowance,Inactive
+,112,NE_BONUSPERCOLI_MT,Bonus Per Coli Mitra,Allowance,Inactive
+,113,AL_BONUSVOLTA,Bonus Volta,Allowance,Inactive
+,114,AL_OVTLINEHAUL,Lembur - Line Haul,Allowance,Inactive
+,115,AL_OVTDAILY,Lembur Harian,Allowance,Inactive
+,116,AL_OVT,Lemburan,Allowance,
+,117,AL_ADDOVT,Additional Lemburan,Allowance,
+,118,AL_PERDINUMAKAN,Uang Makan Perdin,Allowance,
+,119,AL_PERDINUSAKU,Uang Saku Perdin,Allowance,
+,120,AL_CLAIMFRAME,Claim Frame,Allowance,
+,121,AL_CLAIMLENSA,Claim Lensa,Allowance,
+,122,AL_CLAIMRAWATINAP,Claim Rawat Inap,Allowance,
+,123,AL_ADDCLAIMRAWATINAP,Additional Claim Rawat Inap,Allowance,
+,124,AL_CLAIMRAWATJALAN,Claim Rawat Jalan,Allowance,
+,125,AL_ADDCLAIMRAWATJALAN,Additional Claim Rawat Jalan,Allowance,
+,126,AL_CLAIMMATCS,Santunan Maternity Caesar,Allowance,
+,127,AL_CLAIMMATMC,Santunan Maternity Miscarriage,Allowance,
+,128,AL_CLAIMMATNM,Santunan Maternity Normal,Allowance,
+,129,AL_ADDCLAIMMAT,Additional Maternity,Allowance,
+,130,AL_REFPOTTEI,Pengembalian Potongan Volta TEI,Allowance,Inactive
+,131,AL_BHRMITRA,BHR Mitra,Allowance,
+,132,AL_THR,THR,Allowance,
+,133,AL_ADDTHR,Additional THR,Allowance,
+,134,AL_RAPELTHR,Rapel THR,Allowance,
+,135,AL_THR_GROSS,THR Gross,Allowance,
+,136,AL_JKK,BPJS JKK (Pemberi Kerja),Allowance,
+,137,AL_JKK_GROSS,BPJS JKK (Pemberi Kerja) Gross,Allowance,
+,138,AL_JKM,BPJS JKM (Pemberi Kerja),Allowance,
+,139,AL_JKM_GROSS,BPJS JKM (Pemberi Kerja) Gross,Allowance,
+,140,AL_JHTCOMP37,BPJS JHT (Pemberi Kerja),Allowance,
+,141,AL_JHTCOMP37_GROSS,BPJS JHT (Pemberi Kerja) Gross,Allowance,
+,142,AL_JPCOMP2,BPJS Pensiun (Pemberi Kerja),Allowance,
+,143,AL_JPCOMP2_GROSS,BPJS Pensiun (Pemberi Kerja) Gross,Allowance,
+,144,AL_BPJSKSCOMP,BPJS Kesehatan (Pemberi Kerja),Allowance,
+,145,AL_BPJSKSCOMP_GROSS,BPJS Kesehatan (Pemberi Kerja) Gross,Allowance,
+,146,DE_RAPEL_MITRA,Rapel Mitra Sudah Dibayar,Deduction,Inactive
+,147,DE_BENSINHARIAN,Deduction Bensin Harian,Deduction,Inactive
+,148,DE_MAKANHARIAN,Deduction Makan Harian,Deduction,Inactive
+,149,DE_PULSAHARIAN,Deduction Pulsa Harian,Deduction,Inactive
+,150,DE_OPERATIONALKAS,Tunjangan Operational Dibayar Kas,Deduction,Inactive
+,151,DE_UJALANLINEHAUL,Uang Jalan - Line Haul (D),Deduction,Inactive
+,152,DE_KOMISIKARYAWAN,Deduction Komisi Karyawan,Deduction,Inactive
+,153,DE_REWARD,Reward (D),Deduction,
+,154,DE_OVTLINEHAUL,Lembur - Line Haul (D),Deduction,Inactive
+,155,DE_OVTDAILY,Lembur Harian (D),Deduction,
+,156,DE_PERDINUMAKAN,Uang Makan Perdin (D),Deduction,
+,157,DE_PERDINUSAKU,Uang Saku Perdin (D),Deduction,
+,158,DE_HUTANGCUTI,Potongan Hutang Cuti,Deduction,
+,159,DE_POTOWNRISK,Pot. Own Risk,Deduction,
+,160,DE_POTAUDIT,Pot. Audit,Deduction,
+,161,DE_POTBRGHILANG,Pot. Barang Hilang,Deduction,
+,162,DE_POTDENDA,Pot. Denda,Deduction,Inactive
+,163,DE_POTHP,Pot. Handphone,Deduction,Inactive
+,164,DE_KASBON,Pot. Kasbon,Deduction,
+,165,DE_KASBONHARIAN,Pot. Kasbon Harian,Deduction,Inactive
+,166,DE_KERUSAKANVOLTA,Pot. Kerusakan Volta,Deduction,Inactive
+,167,DE_POTLAIN,Pot. Lain,Deduction,
+,168,DE_POTLAIN_GROSS,Pot. Lain Gross,Deduction,
+,169,DE_VOLTASEI,Pot. Volta SEI,Deduction,Inactive
+,170,DE_VOLTA,Pot. Volta T-FAS,Deduction,Inactive
+,171,DE_COD,Potongan COD,Deduction,Inactive
+,172,DE_HUTANGCUTI_GROS,Potongan Hutang Cuti,Deduction,
+,173,DE_UANGPENALTI,Potongan Uang Penalti,Deduction,Inactive
+,174,DE_ATRIBUT,Deposit Atribut,Deduction,Inactive
+,175,DE_JKK_MITRA,BPJS JKK (Kemitraan),Deduction,
+,176,DE_JKK,BPJS JKK (Pemberi Kerja),Deduction,
+,177,DE_JKK_GROSS,BPJS JKK (Pemberi Kerja) Gross,Deduction,
+,178,DE_JKM_MITRA,BPJS JKM (Kemitraan),Deduction,
+,179,DE_JKM,BPJS JKM (Pemberi Kerja),Deduction,
+,180,DE_JKM_GROSS,BPJS JKM (Pemberi Kerja) Gross,Deduction,
+,181,DE_JHTEMP,BPJS JHT,Deduction,
+,182,DE_JHTCOMP37,BPJS JHT (Pemberi Kerja),Deduction,
+,183,DE_JHTCOMP37_GROSS,BPJS JHT (Pemberi Kerja) Gross,Deduction,
+,184,DE_JHTEMP_GROSS,BPJS JHT Gross,Deduction,
+,185,DE_JPEMP,BPJS Pensiun,Deduction,
+,186,DE_JPCOMP2,BPJS Pensiun (Pemberi Kerja),Deduction,
+,187,DE_JPCOMP2_GROSS,BPJS Pensiun (Pemberi Kerja) Gross,Deduction,
+,188,DE_JPEMP_GROSS,BPJS Pensiun Gross,Deduction,
+,189,DE_BPJSKSEMP,BPJS Kesehatan,Deduction,
+,190,DE_BPJSKSCOMP,BPJS Kesehatan (Pemberi Kerja),Deduction,
+,191,DE_BPJSKSCOMP_GROSS,BPJS Kesehatan (Pemberi Kerja) Gross,Deduction,
+,192,DE_BPJSKSEMP_GROSS,BPJS Kesehatan Gross,Deduction,
+,193,DE_THPBALANCING,THP Balancing,Deduction,
+,194,NE_FIXEDSAL,Basic Salary Full,Neutral,
+,195,NE_JABATANFULL,Tunjangan Jabatan Full,Neutral,
+,196,NE_JABATANFULL_GROSS,Tunjangan Jabatan Full Gross,Neutral,
+,197,NE_JABATANPJSFULL,Tunjangan Jabatan PJS Full,Neutral,
+,198,NE_BASICTUNJOPS,Basic Tunjangan Operasional,Neutral,
+,199,NE_TUNJPENDIDIKAN,Netral Tunjangan Pendidikan,Neutral,
+,200,NE_HARIKERJA,Hari Kerja,Neutral,
+,201,NE_ATTENDANCE_INFO,Hari Kerja Realisasi,Neutral,
+,202,NE_PRORATE,Prorate Base,Neutral,
+,203,NE_BASICJABATAN,Basic Jabatan,Neutral,
+,204,NE_BASICJABATANPJS,Basic Jabatan PJS,Neutral,
+,205,NE_GETKERAJINAN,Neutral Check Get Kerajinan,Neutral,Inactive
+,206,NE_JMLSISACUTI,Jumlah Sisa Cuti,Neutral,
+,207,NE_INSKELIPATAN,Nilai Insentif Kelipatan,Neutral,Inactive
+,208,NE_INSKELIPATAN_MT,Nilai Insentif Kelipatan Mitra,Neutral,Inactive
+,209,NE_PENCTARGETPKT,Pencapaian Target Paket,Neutral,Inactive
+,210,NE_TARGETPKT,Target Paket Bulanan,Neutral,Inactive
+,211,NE_TARGETPKT_MT,Target Paket Bulanan Mitra,Neutral,Inactive
+,212,NE_KELIPATANBNSPKT,Bonus Kelipatan (Coli),Neutral,Inactive
+,213,NE_KELIPATANBNSPKT_MT,Bonus Kelipatan (Coli) Mitra,Neutral,Inactive
+,214,NE_BONUSPERCOLI,Bonus Per Coli,Neutral,Inactive
+,215,NE_BONUSPERCOLI_MT_USE,Bonus Per Coli Mitra,Neutral,Inactive
+,216,NE_BONUSUTAMA,Bonus Utama,Neutral,Inactive
+,217,NE_BONUSUTAMA_MT,Bonus Utama Mitra,Neutral,Inactive
+,218,NE_ZEROBONUSPAKET,Zero Bonus Paket,Neutral,Inactive
+,219,NE_OVTHARIRAYA,Ovt Hari Raya (Natal/Idul Fitri),Neutral,
+,220,NE_OVTOFFDAY,Ovt OFF Value,Neutral,
+,221,NE_OVTWEEKDAY,Ovt WeekDay Value,Neutral,
+,222,NE_POTBRGHILANG_SALDEDUCT,Potongan Barang Hilang Salary Deduction Only,Neutral,
+,223,NE_POTDENDA_SALDEDUCT,Potongan Denda Salary Deduction Only,Neutral,
+,224,NE_POTOWNRISK_SALDEDUCT,Potongan Own Risk Salary Deduction Only,Neutral,
+,225,NE_KASBON_ADDITION,KASBON (Saldo Piutang Awal),Neutral,
+,226,NE_POTAUDIT_ADDITION,POTAUDIT (Saldo Piutang Awal),Neutral,
+,227,NE_POTBRGHILANG_ADDITION,POTBRGHILANG (Saldo Piutang Awal),Neutral,
+,228,NE_POTDENDA_ADDITION,POTDENDA (Saldo Piutang Awal),Neutral,Inactive
+,229,NE_POTHP_ADDITION,POTHP (Saldo Piutang Awal),Neutral,Inactive
+,230,NE_POTKERUSAKANVOLTA_ADDITION,POTKERUSAKANVOLTA (Saldo Piutang Awal),Neutral,Inactive
+,231,NE_POTLAIN_ADDITION,POTLAIN (Saldo Piutang Awal),Neutral,
+,232,NE_POTOWNRISK_ADDITION,POTOWNRISK (Saldo Piutang Awal),Neutral,
+,233,NE_POTVOLTA_ADDITION,POTVOLTA (Saldo Piutang Awal),Neutral,Inactive
+,234,NE_POTVOLTASEI_ADDITION,POTVOLTASEI (Saldo Piutang Awal),Neutral,Inactive
+,235,NE_JOURNALCHECKER,Neutral Jurnal Balance Checker,Neutral,
+,236,NE_BASETHR,Dasar Perhitungan THR,Neutral,
+,237,NE_BULANTHR,Total Bulan Prorate THR,Neutral,
+,238,NE_TUNJABTHR,Dasar Tunjangan Jabatan THR,Neutral,
+,239,NE_TUNJABPJSTHR,Dasar Tunjangan Jabatan PJS THR,Neutral,
+,240,NE_BPJSJPBASE,Dasar BPJS JP,Neutral,
+,241,NE_BPJSKSBASE,Dasar BPJS KS,Neutral,
+,242,NE_BPJSTKBASE,Dasar BPJS TK,Neutral,
+,243,NE_PERIODDIRUMAHKAN,Periode Dirumahkan (Month),Neutral,Inactive
+,244,NE_PERPAKET,Flag Per Paket,Neutral,Inactive
+,245,NE_PERPAKET_MT,Flag Per Paket Mitra,Neutral,Inactive
+,246,NE_FREELANCE_FLAG,Is Freelance,Neutral,
+,247,NE_PERSENDIRUMAHKAN,Persentase Dirumahkan,Neutral,Inactive
+,248,NE_PERSENSKTPJG,Persentase Gaji Sakit Berkepanjangan,Neutral,
+,249,NE_IS_PJS,PJS Flag,Neutral,
+,250,NE_ISOFFICE,Office Cost Center,Neutral,
+,251,NE_HARIKERJA,Hari Kerja,Neutral,
+,252,NE_ATTENDANCE_INFO,Hari Kerja Realisasi,Neutral,
+,253,HK_PAYMENT,HK Payment,Neutral,
+,254,NE_PF6,Prorate Active Employee,Neutral,
+,255,NE_TOTHRPEMBAGI,Total Hari Pembagi,Neutral,
+,256,NE_PENCTARGETPKT_MT,Total Pembawaan Paket,Neutral,
+,257,AL_ADDSAL_OS,Additional Lain Lain OS,Allowance,
+,258,AL_RAPELOTHER_OS,Rapel Lain-lain OS,Allowance,
+,259,AL_RAPELSALARY_OS,Rapel Salary OS,Allowance,
+,260,AL_ADDTUNJOPS_OS,Additional Tunjangan Operational OS,Allowance,Inactive
+,261,AL_RAPEL_PYOPERATIONAL_OS,Rapel Tunjangan Operational OS,Allowance,
+,262,AL_PATROLI_OS,Biaya Patroli Security OS,Allowance,
+,263,AL_SERVISMOTOR_OS,Service Motor OS,Allowance,Inactive
+,264,AL_SVC_OS,Severence OS,Allowance,Inactive
+,265,AL_BENSINHARIAN_OS,Tunjangan Bensin Harian OS,Allowance,Inactive
+,266,AL_BONUSPKT_OS,Tunjangan Bonus Paket Coordinator OS,Allowance,Inactive
+,267,AL_INSENTIFREWARDVOLTA_OS,Tunjangan Insentif Reward Volta OS,Allowance,Inactive
+,268,AL_INSENTIF_TRIP_OS,Tunjangan Insentif Trip OS,Allowance,Inactive
+,269,AL_JABATAN_OS,Tunjangan Jabatan OS,Allowance,
+,270,AL_ADDTUNJJAB_OS,Additional Tunjangan Jabatan OS,Allowance,Inactive
+,271,AL_RAPEL_JABATAN_OS,Rapel Tunjangan Jabatan OS,Allowance,
+,272,AL_JABATANPJS_OS,Tunjangan Jabatan PJS OS,Allowance,Inactive
+,273,AL_MAKANHARIAN_OS,Tunjangan Makan Harian OS,Allowance,Inactive
+,274,AL_MALAM_OS,Tunjangan Malam OS,Allowance,Inactive
+,275,AL_OPERASIONALHARIAN_OS,Tunjangan Operasional Harian OS,Allowance,Inactive
+,276,AL_OPERATIONAL_OS,Tunjangan Operasional OS,Allowance,
+,277,AL_PENDIDIKAN_OS,Tunjangan Pendidikan OS,Allowance,Inactive
+,278,AL_PENEMPATAN_OS,Tunjangan Penempatan OS,Allowance,Inactive
+,279,AL_PPH21_OS,Tunjangan Pph 21 OS,Allowance,
+,280,AL_PULSAHARIAN_OS,Tunjangan Pulsa Harian OS,Allowance,Inactive
+,281,AL_REWARD_OS,Tunjangan reward OS,Allowance,Inactive
+,282,AL_SERAGAM_OS,Tunjangan Seragam OS,Allowance,
+,283,AL_TUNJANGANTEMPATTINGGAL_OS,Tunjangan Tempat Tinggal OS,Allowance,Inactive
+,284,AL_TUNJTRANSPORTCOM_OS,Tunjangan Transport Commercial OS,Allowance,
+,285,AL_TRANSPORT_OS,Tunjangan Transport OS,Allowance,
+,286,AL_TUNVOLTA_OS,Tunjangan Volta OS,Allowance,Inactive
+,287,AL_UJALANLINEHAUL_OS,Uang Jalan - Line Haul OS,Allowance,Inactive
+,288,AL_KERAJINAN_OS,Tunjangan Uang Kerajinan OS,Allowance,Inactive
+,289,AL_MAKANBULANAN_OS,Uang Makan Bulanan OS,Allowance,Inactive
+,290,AL_MAKAN_OS,Uang Makan OS,Allowance,Inactive
+,291,AL_ADDTRANS_OS,Additional Uang Transport OS,Allowance,Inactive
+,292,AL_RAPEL_TRANS_OS,Rapel Uang Transport OS,Allowance,Inactive
+,293,AL_ADDUANGPISAH_OS,Additional Uang Pisah OS,Allowance,Inactive
+,294,AL_SISACUTI_OS,Sisa Cuti Dibayarkan OS,Allowance,Inactive
+,295,AL_ADDSISACUTI_OS,Additional Sisa Cuti Dibayarkan OS,Allowance,Inactive
+,296,AL_UANGPISAH_OS,Tunjangan Uang Pisah OS,Allowance,Inactive
+,297,AL_INSMINGGU_OS,Insentif Hari Minggu Mitra OS,Allowance,Inactive
+,298,AL_INSENTIFKEHADIRAN_OS,Insentif Kehadiran OS,Allowance,Inactive
+,299,AL_INSKERAJINANMITRA_OS,Insentif Kerajinan Mitra OS,Allowance,Inactive
+,300,AL_KOORDINASILINGKUNGAN_OS,Insentif Koordinasi Lapangan,Allowance,
+,301,AL_INSENTIFMITRALAIN_OS,Insentif Mitra Lain OS,Allowance,
+,302,AL_RAPEL_INSENTIFMITRALAIN_OS,Rapel Insentif Mitra Lain OS,Allowance,Inactive
+,303,AL_INSENTIFMITRA_OS,Insentif Mitra OS,Allowance,
+,304,AL_ADDINSMITRA_OS,Additional Insentif Mitra OS,Allowance,
+,305,AL_RAPEL_INSENTIFMITRA_OS,Rapel Insentif Mitra OS,Allowance,
+,306,AL_INSENTIFMITRASORTER_OS,Insentif Mitra Sorter OS,Allowance,
+,307,AL_RAPEL_INSENTIFMITRASORTER_OS,Rapel Insentif Mitra Sorter OS,Allowance,
+,308,AL_INSENTIF_OS,Insentif OS,Allowance,
+,309,AL_ADDINS_OS,Additional Insentif OS,Allowance,Inactive
+,310,AL_RAPEL_INSENTIF_OS,Rapel Insentif OS,Allowance,
+,311,AL_INSENTIFMITRA10Kg_OS,Insentif Pembawaan Mitra 10 Kg OS,Allowance,
+,312,AL_INSENTIFPERBANTUAN_MT_OS,Insentif Perbantuan Mitra OS,Allowance,
+,313,AL_INSENTIFPERBANTUAN_OS,Insentif Perbantuan OS,Allowance,Inactive
+,314,AL_INSPRODMITRA_OS,Insentif Produktifitas Mitra OS,Allowance,Inactive
+,315,AL_INSENTIFVOLTA_OS,Insentif Volta OS,Allowance,Inactive
+,316,AL_KOMISIKARYAWAN_OS,Komisi Karyawan OS,Allowance,Inactive
+,317,AL_TARGETPKT_MT_OS,Target Paket Mitra OS,Allowance,Inactive
+,318,AL_TARGETPKT_OS,Target Paket OS,Allowance,Inactive
+,319,AL_EXTIMEMT_OS,Loyalty Fee Mitra OS,Allowance,Inactive
+,320,AL_ADDREWARDMITRA_OS,Additional Reward Mitra OS,Allowance,Inactive
+,321,AL_REWARD_MITRA_OS,Reward Mitra OS,Allowance,Inactive
+,322,AL_REWARDMITRASMSTR_MT_OS,Reward Semester Mitra OS,Allowance,Inactive
+,323,AL_REWARDS_OS,Rewards OS,Allowance,Inactive
+,324,AL_ADDBONUSCPP_OS,Additional Bonus CPP OS,Allowance,Inactive
+,325,AL_ADDBNSPKT_OS,Additional Bonus Paket OS,Allowance,Inactive
+,326,AL_RAPEL_BONUSPKT_MT_OS,Rapel Bonus Paket Mitra OS,Allowance,Inactive
+,327,AL_RAPEL_BONUSPKT_OS,Rapel Bonus Paket OS,Allowance,Inactive
+,328,AL_BONUSCOD_MT_OS,Bonus COD Mitra OS,Allowance,Inactive
+,329,AL_BONUSCOD_OS,Bonus COD OS,Allowance,Inactive
+,330,AL_RAPEL_BONUSCOD_OS,Rapel Bonus COD OS,Allowance,Inactive
+,331,AL_BONUSFIRSTLAST_OS,Bonus First & Last OS,Allowance,Inactive
+,332,AL_BONUSMITRA_OS,Bonus Mitra OS,Allowance,Inactive
+,333,AL_ADDBNSMITRA_OS,Additional Bonus Mitra OS,Allowance,Inactive
+,334,AL_BONUS_OS,Bonus OS,Allowance,Inactive
+,335,AL_BONUSKELIPATAN_MT_OS,Bonus Per Paket Mitra OS,Allowance,Inactive
+,336,AL_BONUSKELIPATAN_OS,Bonus Per Paket OS,Allowance,Inactive
+,337,AL_BONUSVOLTA_OS,Bonus Volta OS,Allowance,Inactive
+,338,AL_RAPELREWARD_OS,Rapel Bonus Rewards OS,Allowance,Inactive
+,339,AL_OVTLINEHAUL_OS,Lembur - Line Haul OS,Allowance,Inactive
+,340,AL_OVTDAILY_OS,Lembur Harian OS,Allowance,Inactive
+,341,AL_LEMBURSECURITY_OS,Lembur Security OS,Allowance,
+,342,AL_OVT_OS,Lemburan OS,Allowance,
+,343,AL_ADDOVT_OS,Additional Lemburan OS,Allowance,Inactive
+,344,AL_MAKANTRANS_OS,Uang Makan Lembur & Transport OS,Allowance,
+,345,AL_PERDINUMAKAN_OS,Uang Makan Perdin OS,Allowance,Inactive
+,346,AL_PERDINUSAKU_OS,Uang Saku Perdin OS,Allowance,Inactive
+,347,AL_ADDPTCASH_OS,Additional Petty Cash,Allowance,
+,348,AL_BHRMITRA_OS,BHR Mitra OS,Allowance,
+,349,AL_THR_OS,THR OS,Allowance,
+,350,AL_ADDTHR_OS,Additional THR OS,Allowance,Inactive
+,351,AL_RAPELTHR_OS,Rapel THR OS,Allowance,
+,352,AL_JKK_MITRA_OS,BPJS JKK (Kemitraan) OS,Allowance,
+,353,AL_JKK_OS,BPJS JKK (Pemberi Kerja) OS,Allowance,
+,354,AL_JKM_MITRA_OS,BPJS JKM (Kemitraan) OS,Allowance,
+,355,AL_JKM_OS,BPJS JKM (Pemberi Kerja) OS,Allowance,
+,356,AL_JHTCOMP37_OS,BPJS JHT (Pemberi Kerja) OS,Allowance,
+,357,AL_BPJSKSCOMP_OS,BPJS Kesehatan (Pemberi Kerja) OS,Allowance,
+,358,AL_JPCOMP2_OS,BPJS Pensiun (Pemberi Kerja) OS,Allowance,
+,359,AL_INSENTIFMITRATEMP_OS,Fee Mitra Temp OS,Allowance,Inactive
+,360,DE_ADDSAL_OS,Potongan Additional Lain Lain OS,Deduction,
+,361,DE_BENSINHARIAN_OS,Deduction Bensin Harian OS,Deduction,Inactive
+,362,DE_MAKANHARIAN_OS,Deduction Makan Harian OS,Deduction,Inactive
+,363,DE_PULSAHARIAN_OS,Deduction Pulsa Harian OS,Deduction,Inactive
+,364,DE_SERAGAM_OS,Deduction Seragam OS,Deduction,
+,365,DE_OPERATIONALKAS_OS,Tunjangan Operational Dibayar Kas OS,Deduction,Inactive
+,366,DE_UJALANLINEHAUL_OS,Uang Jalan - Line Haul (D) OS,Deduction,Inactive
+,367,DE_KOMISIKARYAWAN_OS,Deduction Komisi Karyawan OS,Deduction,Inactive
+,368,DE_REWARD_OS,Reward (D) OS,Deduction,Inactive
+,369,DE_OVTLINEHAUL_OS,Lembur - Line Haul (D) OS,Deduction,Inactive
+,370,DE_OVTDAILY_OS,Lembur Harian (D) OS,Deduction,Inactive
+,371,DE_PERDINUMAKAN_OS,Uang Makan Perdin (D) OS,Deduction,Inactive
+,372,DE_PERDINUSAKU_OS,Uang Saku Perdin (D) OS,Deduction,Inactive
+,373,DE_ADDPTCASH_OS,Potongan Additional Petty Cash,Deduction,
+,374,DE_PPH21_OS,Potongan Pph 21 OS,Deduction,
+,375,DE_ADDGAJI_OS,Potongan Additional Lain Lain OS ( inactive ),Deduction,Inactive
+,376,DE_POTAUDIT_OS,Pot. Audit OS,Deduction,Inactive
+,377,DE_POTBRGHILANG_OS,Pot. Barang Hilang OS,Deduction,
+,378,DE_POTDENDA_OS,Pot. Denda OS,Deduction,Inactive
+,379,DE_POTHP_OS,Pot. Handphone OS,Deduction,Inactive
+,380,DE_KASBONHARIAN_OS,Pot. Kasbon Harian OS,Deduction,Inactive
+,381,DE_KASBON_OS,Pot. Kasbon OS,Deduction,Inactive
+,382,DE_KERUSAKANVOLTA_OS,Pot. Kerusakan Volta OS,Deduction,Inactive
+,383,DE_POTLAIN_OS,Pot. Lain OS,Deduction,
+,384,DE_POTOWNRISK_OS,Pot. Own Risk OS,Deduction,
+,385,DE_PINJAMVENDOR_OS,Pot. Pinjaman ke Vendor OS,Deduction,Inactive
+,386,DE_VOLTASEI_OS,Pot. Volta SEI OS,Deduction,Inactive
+,387,DE_VOLTA_OS,Pot. Volta T-FAS OS,Deduction,Inactive
+,388,DE_COD_OS,Potongan COD OS,Deduction,Inactive
+,389,DE_HUTANGCUTI_OS,Potongan Hutang Cuti OS,Deduction,Inactive
+,390,DE_UANGPENALTI_OS,Potongan Uang Penalti OS,Deduction,Inactive
+,391,DE_ATRIBUT_OS,Deposit Atribut OS,Deduction,Inactive
+,392,DE_KOORDINASILINGKUNGAN_OS,Potongan Koordinasi Lingkungan,Deduction,
+,393,DE_JKK_MITRA_OS,BPJS JKK (Kemitraan) OS,Deduction,
+,394,DE_JKK_OS,BPJS JKK (Pemberi Kerja) OS,Deduction,
+,395,DE_JKM_MITRA_OS,BPJS JKM (Kemitraan) OS,Deduction,
+,396,DE_JKM_OS,BPJS JKM (Pemberi Kerja) OS,Deduction,
+,397,DE_JHTCOMP37_OS,BPJS JHT (Pemberi Kerja) OS,Deduction,
+,398,DE_JHTEMP_OS,BPJS JHT OS,Deduction,
+,399,DE_BPJSKSCOMP_OS,BPJS Kesehatan (Pemberi Kerja) OS,Deduction,
+,400,DE_BPJSKSEMP_OS,BPJS Kesehatan OS,Deduction,
+,401,DE_JPCOMP2_OS,BPJS Pensiun (Pemberi Kerja) OS,Deduction,
+,402,DE_JPEMP_OS,BPJS Pensiun OS,Deduction,
+,403,NE_BASICJABATAN_OS,Basic Jabatan OS,Neutral,
+,404,NE_FIXEDSAL_OS,Basic Salary Full OS,Neutral,
+,405,NE_BASICJABATANPJS_OS,Basic Jabatan PJS OS,Neutral,Inactive
+,406,NE_PYOPERATIONAL_OS,Netral Operasional dibayar Payroll OS,Neutral,
+,407,NE_GETKERAJINAN_OS,Neutral Check Get Kerajinan,Neutral,Inactive
+,408,NE_JABATANFULL_OS,Tunjangan Jabatan Full OS,Neutral,
+,409,NE_JABATANPJSFULL_OS,Tunjangan Jabatan PJS Full OS,Neutral,Inactive
+,410,NE_BASICTUNJOPS_OS,Basic Tunjangan Operasional OS,Neutral,
+,411,NE_TUNJPENDIDIKAN_OS,Netral Tunjangan Pendidikan OS,Neutral,Inactive
+,412,NE_TRANSPORT_OS,Tunjangan Transport OS,Neutral,
+,413,NE_JMLSISACUTI_OS,Jumlah Sisa Cuti OS,Neutral,Inactive
+,414,NE_INSKELIPATAN_MT_OS,Nilai Insentif Kelipatan Mitra OS,Neutral,Inactive
+,415,NE_INSKELIPATAN_OS,Nilai Insentif Kelipatan OS,Neutral,Inactive
+,416,NE_TARGETPKT_MT_OS,Target Paket Bulanan Mitra OS,Neutral,Inactive
+,417,NE_TARGETPKT_OS,Target Paket Bulanan OS,Neutral,Inactive
+,418,NE_PENCTARGETPKT_OS,Pencapaian Target Paket OS,Neutral,Inactive
+,419,NE_KELIPATANBNSPKT_MT_OS,Bonus Kelipatan (Coli) Mitra OS,Neutral,Inactive
+,420,NE_KELIPATANBNSPKT_OS,Bonus Kelipatan (Coli) OS,Neutral,Inactive
+,421,NE_BONUSPERCOLI_MT_OS,Bonus Per Coli Mitra OS,Neutral,Inactive
+,422,NE_BONUSPERCOLI_OS,Bonus Per Coli OS,Neutral,Inactive
+,423,NE_BONUSUTAMA_MT_OS,Bonus Utama Mitra OS,Neutral,Inactive
+,424,NE_BONUSUTAMA_OS,Bonus Utama OS,Neutral,Inactive
+,425,NE_ZEROBONUSPAKET_OS,Zero Bonus Paket OS,Neutral,Inactive
+,426,NE_OVTHARIRAYA_OS,Ovt Hari Raya (Natal/Idul Fitri) OS,Neutral,
+,427,NE_OVTOFFDAY_OS,Ovt OFF Value OS,Neutral,Inactive
+,428,NE_OVTWEEKDAY_OS,Ovt WeekDay Value OS,Neutral,Inactive
+,429,NE_HUTANGCUTI_OS,Potongan Hutang Cuti OS,Neutral,Inactive
+,430,NE_BYOPS_MNT_OS,By Ops & maintance,Neutral,
+,431,NE_KOORDINASILINGKUNGAN_OS,Netral Koordinasi Lingkungan,Neutral,
+,432,NE_PEMBINAAN_OS,Pembinaan OS,Neutral,
+,433,NE_SERAGAM_OS,Seragam OS,Neutral,
+,434,NE_JOURNALCHECKER_OS,Neutral Jurnal Balance Checker OS,Neutral,
+,435,NE_BASETHR_OS,Dasar Perhitungan THR OS,Neutral,
+,436,NE_BULANTHR_OS,Total Bulan Prorate THR OS,Neutral,
+,437,NE_TUNJABTHR_OS,Dasar Tunjangan Jabatan THR OS,Neutral,
+,438,NE_TUNJABPJSTHR_OS,Dasar Tunjangan Jabatan PJS THR OS,Neutral,Inactive
+,439,NE_BPJSJPBASE_OS,Dasar BPJS JP OS,Neutral,
+,440,NE_BPJSKSBASE_OS,Dasar BPJS KS OS,Neutral,
+,441,NE_BPJSTKBASE_OS,Dasar BPJS TK OS,Neutral,
+,442,NE_BUDGETPERMONTH_OS,Total Biaya OS,Neutral,
+,443,NE_MANFEE_OS,% Man Fee OS,Neutral,
+,444,NE_MGMTFEE_OS,Management Fee OS,Neutral,
+,445,NE_PPN11_OS,PPN11% OS,Neutral,
+,446,NE_PPH23_OS,PPh 23 (2%) OS,Neutral,
+,447,NE_SUBTOTALINVOICE_OS,Grand Total Biaya OS,Neutral,
+,448,NE_ADDPTCASH_OS,Potongan Additional Petty Cash,Neutral,
+,449,NE_POTOWNRISK_OS,Pot. Own Risk OS,Neutral,
+,450,NE_POTAUDIT_OS,Pot. Audit OS,Neutral,Inactive
+,451,NE_POTBRGHILANG_OS,Pot. Barang Hilang OS,Neutral,
+,452,NE_POTDENDA_OS,Pot. Denda OS,Neutral,Inactive
+,453,NE_KERUSAKANVOLTA_OS,Pot. Kerusakan Volta OS,Neutral,Inactive
+,454,NE_POTLAIN_OS,Pot. Lain OS,Neutral,
+,455,NE_VOLTASEI_OS,Pot. Volta SEI OS,Neutral,Inactive
+,456,NE_VOLTA_OS,Pot. Volta T-FAS OS,Neutral,Inactive
+,457,NE_COD_OS,Potongan COD OS,Neutral,
+,458,NE_GRANDTOTALINVOICE_OS,Grand Total Invoice OS,Neutral,
+,459,NE_PERIODDIRUMAHKAN_OS,Periode Dirumahkan (Month) OS,Neutral,Inactive
+,460,NE_PERPAKET_MT_OS,Flag Per Paket Mitra OS,Neutral,Inactive
+,461,NE_PERPAKET_OS,Flag Per Paket OS,Neutral,
+,462,NE_FREELANCE_FLAG_OS,Is Freelance OS,Neutral,
+,463,NE_ISJOINTERMINATE_OS,Join / Resign Flag OS,Neutral,
+,464,NE_PERSENDIRUMAHKAN_OS,Persentase Dirumahkan OS,Neutral,Inactive
+,465,NE_PERSENSKTPJG_OS,Persentase Gaji Sakit Berkepanjangan OS,Neutral,Inactive
+,466,NE_IS_PJS_OS,PJS Flag OS,Neutral,
+,467,NE_ISOFFICE_OS,Office Cost Center OS,Neutral,
+,468,NE_HARIKERJA_OS,Hari Kerja OS,Neutral,
+,469,NE_ATTENDANCE_INFO_OS,Hari Kerja Realisasi OS,Neutral,
+,470,NE_PF6_OS,Prorate Active Employee OS,Neutral,
+,471,NE_PRORATE_OS,Prorate Base OS,Neutral,
+,472,NE_TOTHRPEMBAGI_OS,Total Hari Pembagi OS,Neutral,
+,473,NE_PENCTARGETPKT_MT_OS,Total Pembawaan Paket OS,Neutral,Inactive

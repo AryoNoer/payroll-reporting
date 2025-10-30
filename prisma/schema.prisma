@@ -1,0 +1,139 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  password      String
+  role          UserRole  @default(USER)
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+  
+  uploads       Upload[]
+  reports       Report[]
+  
+  @@map("users")
+}
+
+enum UserRole {
+  ADMIN
+  USER
+}
+
+model Component {
+  id        String   @id @default(cuid())
+  code      String   @unique
+  name      String
+  type      ComponentType
+  notes     String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  
+  @@map("components")
+}
+
+enum ComponentType {
+  ALLOWANCE
+  DEDUCTION
+  NEUTRAL
+}
+
+model Upload {
+  id           String       @id @default(cuid())
+  fileName     String
+  originalName String
+  fileSize     Int
+  rowCount     Int
+  period       DateTime
+  status       UploadStatus @default(PROCESSING)
+  errorMessage String?
+  uploadedAt   DateTime     @default(now())
+  userId       String
+  user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  employees    Employee[]
+  reports      Report[]
+  
+  @@map("uploads")
+}
+
+enum UploadStatus {
+  PROCESSING
+  COMPLETED
+  FAILED
+}
+
+model Employee {
+  id                String   @id @default(cuid())
+  uploadId          String
+  upload            Upload   @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  
+  // Basic Info
+  employeeNo        String
+  name              String
+  gender            String?
+  noKTP             String?
+  taxFileNo         String?
+  position          String?
+  directorate       String?
+  orgUnit           String?
+  
+  // Employment
+  grade             String?
+  employmentStatus  String?
+  joinDate          DateTime?
+  terminateDate     DateTime?
+  lengthOfService   String?
+  taxStatus         String?
+  
+  // Salary Data (stored as JSONB for flexibility)
+  salaryData        Json
+  allowanceData     Json
+  deductionData     Json
+  neutralData       Json
+  
+  createdAt         DateTime @default(now())
+  
+  @@index([uploadId])
+  @@index([employeeNo])
+  @@map("employees")
+}
+
+model Report {
+  id              String       @id @default(cuid())
+  name            String
+  description     String?
+  uploadId        String
+  upload          Upload       @relation(fields: [uploadId], references: [id], onDelete: Cascade)
+  userId          String
+  user            User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  
+  // Selected fields for report
+  selectedFields  Json
+  
+  // Filters applied
+  filters         Json?
+  
+  // Report metadata
+  totalRecords    Int
+  fileUrl         String?
+  
+  createdAt       DateTime     @default(now())
+  
+  @@map("reports")
+}
