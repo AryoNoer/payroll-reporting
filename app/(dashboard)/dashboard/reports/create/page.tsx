@@ -42,8 +42,14 @@ export default function CreateReportPage() {
 
   useEffect(() => {
     fetchUploads();
-    fetchComponents();
   }, []);
+
+  // Fetch available fields when upload is selected
+  useEffect(() => {
+    if (selectedUpload && step === 2) {
+      fetchAvailableFields();
+    }
+  }, [selectedUpload, step]);
 
   const fetchUploads = async () => {
     try {
@@ -55,7 +61,33 @@ export default function CreateReportPage() {
     }
   };
 
-  const fetchComponents = async () => {
+  const fetchAvailableFields = async () => {
+    if (!selectedUpload) return;
+
+    setLoading(true);
+    try {
+      const response = await fetch(`/api/uploads/${selectedUpload}/fields`);
+      const data = await response.json();
+
+      // Flatten all categorized fields into single array
+      const allFields: Component[] = [
+        ...(data.salary || []),
+        ...(data.allowance || []),
+        ...(data.deduction || []),
+        ...(data.neutral || []),
+      ];
+
+      console.log(`✅ Loaded ${allFields.length} available fields from upload`);
+      setComponents(allFields);
+    } catch (error) {
+      console.error("Error fetching available fields:", error);
+      fetchMasterComponents();
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const fetchMasterComponents = async () => {
     try {
       const response = await fetch("/api/components");
       const data = await response.json();
@@ -73,23 +105,28 @@ export default function CreateReportPage() {
     return matchesSearch && matchesType;
   });
 
-  const toggleField = (code: string) => {
+  // ✅ FIX: Toggle by field NAME, not CODE
+  const toggleField = (fieldName: string) => {
     const newSet = new Set(selectedFields);
-    if (newSet.has(code)) {
-      newSet.delete(code);
+    if (newSet.has(fieldName)) {
+      newSet.delete(fieldName);
     } else {
-      newSet.add(code);
+      newSet.add(fieldName);
     }
     setSelectedFields(newSet);
+    console.log(`Field toggled: ${fieldName}. Total selected: ${newSet.size}`);
   };
 
+  // ✅ FIX: Select all by field NAME
   const selectAll = () => {
-    const allCodes = filteredComponents.map((c) => c.code);
-    setSelectedFields(new Set(allCodes));
+    const allNames = filteredComponents.map((c) => c.name);
+    setSelectedFields(new Set(allNames));
+    console.log(`✅ Selected all: ${allNames.length} fields`);
   };
 
   const deselectAll = () => {
     setSelectedFields(new Set());
+    console.log("✅ Cleared all selections");
   };
 
   const handleGenerateReport = async () => {
@@ -97,6 +134,12 @@ export default function CreateReportPage() {
       alert("Please complete all fields");
       return;
     }
+
+    console.log("=== GENERATING REPORT ===");
+    console.log(`Upload ID: ${selectedUpload}`);
+    console.log(`Report Name: ${reportName}`);
+    console.log(`Selected Fields: ${selectedFields.size}`);
+    console.log(`Sample fields:`, Array.from(selectedFields).slice(0, 10));
 
     setGenerating(true);
     try {
@@ -107,20 +150,23 @@ export default function CreateReportPage() {
           uploadId: selectedUpload,
           name: reportName,
           description: reportDescription,
-          selectedFields: Array.from(selectedFields),
+          selectedFields: Array.from(selectedFields), // ✅ Field NAMES
         }),
       });
 
       if (response.ok) {
+        const result = await response.json();
+        console.log("✅ Report created:", result);
         alert("Report generated successfully!");
         router.push("/dashboard/reports");
       } else {
         const error = await response.json();
-        alert(`Failed to generate report: ${error.message}`);
+        console.error("❌ Report creation failed:", error);
+        alert(`Failed to generate report: ${error.message || error.error}`);
       }
     } catch (error) {
+      console.error("❌ Network error:", error);
       alert("Error generating report");
-      console.error(error);
     } finally {
       setGenerating(false);
     }
@@ -232,7 +278,7 @@ export default function CreateReportPage() {
                 onClick={selectAll}
                 className="px-3 py-1 text-sm text-indigo-600 hover:bg-indigo-50 rounded-lg transition-colors"
               >
-                Select All
+                Select All ({filteredComponents.length})
               </button>
               <button
                 onClick={deselectAll}
@@ -267,39 +313,49 @@ export default function CreateReportPage() {
             </select>
           </div>
 
-          {/* Fields Grid */}
-          <div className="max-h-96 overflow-y-auto border border-gray-200 rounded-lg">
-            <div className="divide-y divide-gray-200">
-              {filteredComponents.map((comp) => (
-                <label
-                  key={comp.id}
-                  className="flex items-center space-x-3 p-4 hover:bg-gray-50 cursor-pointer"
-                >
-                  <input
-                    type="checkbox"
-                    checked={selectedFields.has(comp.code)}
-                    onChange={() => toggleField(comp.code)}
-                    className="w-4 h-4 text-indigo-600 rounded"
-                  />
-                  <div className="flex-1">
-                    <p className="font-medium text-gray-900">{comp.name}</p>
-                    <p className="text-xs text-gray-500">{comp.code}</p>
-                  </div>
-                  <span
-                    className={`px-2 py-1 text-xs rounded-full ${
-                      comp.type === "ALLOWANCE"
-                        ? "bg-green-100 text-green-800"
-                        : comp.type === "DEDUCTION"
-                        ? "bg-red-100 text-red-800"
-                        : "bg-blue-100 text-blue-800"
-                    }`}
-                  >
-                    {comp.type}
-                  </span>
-                </label>
-              ))}
+          {/* Loading State */}
+          {loading && (
+            <div className="text-center py-8">
+              <Loader2 className="w-8 h-8 animate-spin text-indigo-600 mx-auto mb-2" />
+              <p className="text-gray-500">Loading available fields...</p>
             </div>
-          </div>
+          )}
+
+          {/* Fields Grid */}
+          {!loading && (
+            <div className="max-h-96 overflow-y-auto border border-gray-200 rounded-lg">
+              <div className="divide-y divide-gray-200">
+                {filteredComponents.map((comp) => (
+                  <label
+                    key={comp.id}
+                    className="flex items-center space-x-3 p-4 hover:bg-gray-50 cursor-pointer"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={selectedFields.has(comp.name)}
+                      onChange={() => toggleField(comp.name)}
+                      className="w-4 h-4 text-indigo-600 rounded"
+                    />
+                    <div className="flex-1">
+                      <p className="font-medium text-gray-900">{comp.name}</p>
+                      <p className="text-xs text-gray-500">{comp.code}</p>
+                    </div>
+                    <span
+                      className={`px-2 py-1 text-xs rounded-full ${
+                        comp.type === "ALLOWANCE"
+                          ? "bg-green-100 text-green-800"
+                          : comp.type === "DEDUCTION"
+                          ? "bg-red-100 text-red-800"
+                          : "bg-blue-100 text-blue-800"
+                      }`}
+                    >
+                      {comp.type}
+                    </span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
 
           {/* Navigation */}
           <div className="flex justify-between mt-6">

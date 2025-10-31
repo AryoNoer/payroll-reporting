@@ -1,3 +1,5 @@
+/* eslint-disable @typescript-eslint/no-explicit-any */
+
 // app/(dashboard)/dashboard/uploads/page.tsx
 "use client";
 
@@ -9,6 +11,8 @@ import {
   Loader2,
   CheckCircle,
   XCircle,
+  AlertCircle,
+  X,
 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -23,12 +27,19 @@ interface UploadItem {
   errorMessage?: string;
 }
 
+interface UploadError {
+  message: string;
+  code?: string;
+  details?: any;
+}
+
 export default function UploadsPage() {
   const [file, setFile] = useState<File | null>(null);
   const [period, setPeriod] = useState("");
   const [uploading, setUploading] = useState(false);
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<UploadError | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -38,10 +49,37 @@ export default function UploadsPage() {
   const fetchUploads = async () => {
     try {
       const response = await fetch("/api/uploads");
+
+      if (!response.ok) {
+        console.error("Failed to fetch uploads:", response.statusText);
+        setUploads([]);
+        return;
+      }
+
       const data = await response.json();
-      setUploads(data);
-    } catch (error) {
-      console.error("Error fetching uploads:", error);
+
+      // Validate response is array
+      if (Array.isArray(data)) {
+        setUploads(data);
+      } else {
+        console.error("Invalid response format:", data);
+        setUploads([]);
+
+        // Show error if response contains error message
+        if (data.error) {
+          setError({
+            message: "Failed to load uploads: " + data.error,
+            code: "FETCH_ERROR",
+          });
+        }
+      }
+    } catch (err) {
+      console.error("Error fetching uploads:", err);
+      setUploads([]);
+      setError({
+        message: "Failed to load upload history",
+        code: "NETWORK_ERROR",
+      });
     } finally {
       setLoading(false);
     }
@@ -51,20 +89,39 @@ export default function UploadsPage() {
     const selectedFile = e.target.files?.[0];
     if (selectedFile) {
       if (!selectedFile.name.endsWith(".csv")) {
-        alert("Please select a CSV file");
+        setError({
+          message: "Please select a CSV file",
+          code: "INVALID_FILE_TYPE",
+        });
         return;
       }
+
+      // Check file size (max 20MB)
+      if (selectedFile.size > 20 * 1024 * 1024) {
+        setError({
+          message: "File size exceeds 20MB limit",
+          code: "FILE_TOO_LARGE",
+        });
+        return;
+      }
+
       setFile(selectedFile);
+      setError(null);
     }
   };
 
   const handleUpload = async () => {
     if (!file || !period) {
-      alert("Please select a file and period");
+      setError({
+        message: "Please select a file and period",
+        code: "MISSING_INPUTS",
+      });
       return;
     }
 
     setUploading(true);
+    setError(null);
+
     const formData = new FormData();
     formData.append("file", file);
     formData.append("period", period);
@@ -75,19 +132,31 @@ export default function UploadsPage() {
         body: formData,
       });
 
-      if (response.ok) {
-        alert("File uploaded successfully!");
-        setFile(null);
-        setPeriod("");
-        if (fileInputRef.current) fileInputRef.current.value = "";
-        fetchUploads();
-      } else {
-        const error = await response.json();
-        alert(`Upload failed: ${error.message}`);
+      const data = await response.json();
+
+      if (!response.ok) {
+        setError({
+          message: data.error || "Upload failed",
+          code: data.code,
+          details: data.details,
+        });
+        return;
       }
-    } catch (error) {
-      alert("Error uploading file");
-      console.error(error);
+
+      // Success
+      alert("File uploaded successfully! Processing in background...");
+      setFile(null);
+      setPeriod("");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+
+      // Refresh upload list
+      setTimeout(fetchUploads, 1000);
+    } catch (err) {
+      setError({
+        message: "Network error. Please try again.",
+        code: "NETWORK_ERROR",
+      });
+      console.error(err);
     } finally {
       setUploading(false);
     }
@@ -100,6 +169,35 @@ export default function UploadsPage() {
         <h1 className="text-3xl font-bold text-gray-900">Upload Data</h1>
         <p className="text-gray-600 mt-2">Upload CSV file untuk diproses</p>
       </div>
+
+      {/* Error Alert */}
+      {error && (
+        <div className="bg-red-50 border-l-4 border-red-500 p-4 rounded-lg">
+          <div className="flex items-start">
+            <AlertCircle className="w-5 h-5 text-red-500 mt-0.5 shrink-0" />
+            <div className="ml-3 flex-1">
+              <h3 className="text-sm font-medium text-red-800">
+                Upload Error {error.code && `(${error.code})`}
+              </h3>
+              <p className="text-sm text-red-700 mt-1">{error.message}</p>
+
+              {error.details && (
+                <details className="mt-2">
+                  <summary className="text-sm text-red-600 cursor-pointer hover:text-red-800">
+                    View details
+                  </summary>
+                  <pre className="mt-2 text-xs bg-red-100 p-2 rounded overflow-x-auto">
+                    {JSON.stringify(error.details, null, 2)}
+                  </pre>
+                </details>
+              )}
+            </div>
+            <button onClick={() => setError(null)} className="ml-3 shrink-0">
+              <X className="w-5 h-5 text-red-500 hover:text-red-700" />
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Upload Form */}
       <div className="bg-white rounded-xl shadow-sm border border-gray-200 p-6">
@@ -128,17 +226,26 @@ export default function UploadsPage() {
               >
                 <div className="text-center">
                   <Upload className="w-10 h-10 text-gray-400 mx-auto mb-2" />
-                  <p className="text-sm text-gray-600">
-                    {file ? file.name : "Click to select CSV file"}
-                  </p>
-                  {file && (
-                    <p className="text-xs text-gray-500 mt-1">
-                      {(file.size / 1024).toFixed(2)} KB
+                  {file ? (
+                    <>
+                      <p className="text-sm font-medium text-gray-900">
+                        {file.name}
+                      </p>
+                      <p className="text-xs text-gray-500 mt-1">
+                        {(file.size / 1024).toFixed(2)} KB
+                      </p>
+                    </>
+                  ) : (
+                    <p className="text-sm text-gray-600">
+                      Click to select CSV file
                     </p>
                   )}
                 </div>
               </label>
             </div>
+            <p className="text-xs text-gray-500 mt-1">
+              Maximum file size: 10MB. Format: CSV only.
+            </p>
           </div>
 
           {/* Period Input */}
@@ -163,7 +270,7 @@ export default function UploadsPage() {
             {uploading ? (
               <>
                 <Loader2 className="w-5 h-5 animate-spin mr-2" />
-                Processing...
+                Uploading & Processing...
               </>
             ) : (
               <>
@@ -185,9 +292,14 @@ export default function UploadsPage() {
 
         <div className="divide-y divide-gray-200">
           {loading ? (
-            <div className="p-8 text-center text-gray-500">Loading...</div>
+            <div className="p-8 text-center">
+              <Loader2 className="w-8 h-8 animate-spin text-indigo-600 mx-auto mb-2" />
+              <p className="text-gray-500">Loading...</p>
+            </div>
           ) : uploads.length === 0 ? (
-            <div className="p-8 text-center text-gray-500">No uploads yet</div>
+            <div className="p-8 text-center text-gray-500">
+              No uploads yet. Upload your first CSV file above.
+            </div>
           ) : (
             uploads.map((upload) => (
               <div
@@ -219,9 +331,10 @@ export default function UploadsPage() {
                         </span>
                       </div>
                       {upload.errorMessage && (
-                        <p className="text-sm text-red-600 mt-2">
-                          {upload.errorMessage}
-                        </p>
+                        <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-sm text-yellow-800">
+                          <p className="font-medium">⚠ Warning:</p>
+                          <p>{upload.errorMessage}</p>
+                        </div>
                       )}
                     </div>
                   </div>
@@ -251,6 +364,19 @@ export default function UploadsPage() {
             ))
           )}
         </div>
+      </div>
+
+      {/* Help Section */}
+      <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+        <h3 className="text-sm font-medium text-blue-900 mb-2">
+          📋 CSV File Requirements
+        </h3>
+        <ul className="text-sm text-blue-800 space-y-1">
+          <li>• Must be in CSV format (.csv)</li>
+          <li>• Required columns: Name, Employee No</li>
+          <li>• Maximum file size: 10MB</li>
+          <li>• Check terminal/console for detailed error logs</li>
+        </ul>
       </div>
     </div>
   );

@@ -14,6 +14,9 @@ export async function GET(
     const user = await requireAuth();
     const reportId = params.id;
 
+    console.log('\n=== GENERATING REPORT DOWNLOAD ===');
+    console.log(`Report ID: ${reportId}`);
+
     // Get report
     const report = await prisma.report.findFirst({
       where: {
@@ -32,70 +35,130 @@ export async function GET(
       );
     }
 
+    console.log(`Report: ${report.name}`);
+    console.log(`Upload: ${report.upload.originalName}`);
+
     // Get employees data
     const employees = await prisma.employee.findMany({
       where: { uploadId: report.uploadId },
     });
 
-    // Get selected fields
+    console.log(`Employees: ${employees.length} rows`);
+
+    // ✅ Get selected fields (these are field NAMES, not codes)
     const selectedFields = report.selectedFields as string[];
+    console.log(`Selected fields: ${selectedFields.length} fields`);
+    console.log(`Sample selected fields:`, selectedFields.slice(0, 10).join(', '));
 
-    // Get component info
-    const components = await prisma.component.findMany({
-      where: {
-        code: { in: selectedFields },
-      },
-    });
-
-    const componentMap = new Map(components.map(c => [c.code, c]));
-
-    // Build Excel data
-    const excelData = employees.map((emp) => {
+    // ✅ Build Excel data - LANGSUNG dari field name
+    const excelData = employees.map((emp, index) => {
       const row: any = {
-        "No": employees.indexOf(emp) + 1,
-        "Name": emp.name,
-        "Employee No": emp.employeeNo,
-        "Gender": emp.gender,
-        "No KTP": emp.noKTP,
-        "Position": emp.position,
-        "Directorate": emp.directorate,
-        "Grade": emp.grade,
-        "Employment Status": emp.employmentStatus,
+        "No": index + 1,
       };
 
-      // Add selected fields
-      selectedFields.forEach((fieldCode) => {
-        const component = componentMap.get(fieldCode);
-        if (!component) return;
+      // Process each selected field by NAME
+      selectedFields.forEach((fieldName) => {
+        let value: any = null;
 
-        const fieldName = component.name;
-        let value = 0;
+        // ✅ Check if it's a dedicated field (metadata)
+        switch (fieldName) {
+          case "Name":
+            value = emp.name;
+            break;
+          case "Employee No":
+            value = emp.employeeNo;
+            break;
+          case "Gender":
+            value = emp.gender;
+            break;
+          case "No KTP":
+            value = emp.noKTP;
+            break;
+          case "Gov. Tax File No.":
+            value = emp.taxFileNo;
+            break;
+          case "Position":
+            value = emp.position;
+            break;
+          case "Directorate":
+            value = emp.directorate;
+            break;
+          case "Org Unit":
+            value = emp.orgUnit;
+            break;
+          case "Grade":
+            value = emp.grade;
+            break;
+          case "Employment Status":
+            value = emp.employmentStatus;
+            break;
+          case "Join Date":
+            value = emp.joinDate ? new Date(emp.joinDate).toLocaleDateString('id-ID') : null;
+            break;
+          case "Terminate Date":
+            value = emp.terminateDate ? new Date(emp.terminateDate).toLocaleDateString('id-ID') : null;
+            break;
+          case "Length of Service":
+            value = emp.lengthOfService;
+            break;
+          case "Tax Status":
+            value = emp.taxStatus;
+            break;
+          
+          // ✅ If not a dedicated field, search in JSON data
+          default:
+            const salaryData = emp.salaryData as any;
+            const allowanceData = emp.allowanceData as any;
+            const deductionData = emp.deductionData as any;
+            const neutralData = emp.neutralData as any;
 
-        // Find value in appropriate data section
-        const salaryData = emp.salaryData as any;
-        const allowanceData = emp.allowanceData as any;
-        const deductionData = emp.deductionData as any;
-        const neutralData = emp.neutralData as any;
-
-        if (salaryData[fieldName] !== undefined) {
-          value = salaryData[fieldName];
-        } else if (allowanceData[fieldName] !== undefined) {
-          value = allowanceData[fieldName];
-        } else if (deductionData[fieldName] !== undefined) {
-          value = deductionData[fieldName];
-        } else if (neutralData[fieldName] !== undefined) {
-          value = neutralData[fieldName];
+            // Search by field NAME in all JSON fields
+            if (salaryData && salaryData[fieldName] !== undefined) {
+              value = salaryData[fieldName];
+            } else if (allowanceData && allowanceData[fieldName] !== undefined) {
+              value = allowanceData[fieldName];
+            } else if (deductionData && deductionData[fieldName] !== undefined) {
+              value = deductionData[fieldName];
+            } else if (neutralData && neutralData[fieldName] !== undefined) {
+              value = neutralData[fieldName];
+            }
+            break;
         }
 
-        row[fieldName] = value;
+        // Add to row with field name as column header
+        row[fieldName] = value ?? "";
       });
 
       return row;
     });
 
+    console.log('Excel data prepared');
+    console.log(`First row sample:`, Object.keys(excelData[0] || {}).slice(0, 10).join(', '));
+    console.log(`First row columns: ${Object.keys(excelData[0] || {}).length}`);
+    console.log(`Expected columns: ${selectedFields.length + 1} (including "No")`);
+
+    if (Object.keys(excelData[0] || {}).length !== selectedFields.length + 1) {
+      console.warn('⚠️  Column count mismatch!');
+    } else {
+      console.log('✅ Column count matches!');
+    }
+
     // Create workbook
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.json_to_sheet(excelData);
+
+    // Auto-size columns (optional, for better readability)
+    const maxWidth = 50;
+    const colWidths = Object.keys(excelData[0] || {}).map(key => {
+      const maxLength = Math.max(
+        key.length,
+        ...excelData.slice(0, 100).map(row => 
+          String(row[key] || "").length
+        )
+      );
+      return { wch: Math.min(maxLength + 2, maxWidth) };
+    });
+    ws['!cols'] = colWidths;
 
     // Add worksheet to workbook
     XLSX.utils.book_append_sheet(wb, ws, "Report");
@@ -103,15 +166,19 @@ export async function GET(
     // Generate buffer
     const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
 
+    console.log(`✅ Report generated successfully`);
+    console.log('=== DOWNLOAD COMPLETE ===\n');
+
     // Return file
+    const sanitizedName = report.name.replace(/[^a-zA-Z0-9-_\s]/g, '_');
     return new NextResponse(buffer, {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "Content-Disposition": `attachment; filename="${report.name}.xlsx"`,
+        "Content-Disposition": `attachment; filename="${sanitizedName}.xlsx"`,
       },
     });
   } catch (error) {
-    console.error("Download error:", error);
+    console.error("❌ Download error:", error);
     return NextResponse.json(
       { error: "Failed to download report" },
       { status: 500 }
