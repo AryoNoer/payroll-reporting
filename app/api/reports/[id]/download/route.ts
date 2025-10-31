@@ -1,4 +1,5 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
+/* eslint-disable @typescript-eslint/no-explicit-any */
 
 // app/api/reports/[id]/download/route.ts
 import { NextRequest, NextResponse } from "next/server";
@@ -8,11 +9,11 @@ import * as XLSX from "xlsx";
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> } // ✅ Changed to Promise
 ) {
   try {
     const user = await requireAuth();
-    const reportId = params.id;
+    const { id: reportId } = await params; // ✅ Await params
 
     console.log('\n=== GENERATING REPORT DOWNLOAD ===');
     console.log(`Report ID: ${reportId}`);
@@ -45,87 +46,57 @@ export async function GET(
 
     console.log(`Employees: ${employees.length} rows`);
 
-    // ✅ Get selected fields (these are field NAMES, not codes)
+    // Get selected fields (these are field NAMES, not codes)
     const selectedFields = report.selectedFields as string[];
     console.log(`Selected fields: ${selectedFields.length} fields`);
     console.log(`Sample selected fields:`, selectedFields.slice(0, 10).join(', '));
 
-    // ✅ Build Excel data - LANGSUNG dari field name
+    // ✅ Build Excel data - ALWAYS include basic fields + selected fields
     const excelData = employees.map((emp, index) => {
+      // ✅ ALWAYS include these basic/metadata fields FIRST
       const row: any = {
         "No": index + 1,
+        "Name": emp.name,
+        "Employee No": emp.employeeNo,
+        "Gender": emp.gender || "",
+        "No KTP": emp.noKTP || "",
+        "Gov. Tax File No.": emp.taxFileNo || "",
+        "Position": emp.position || "",
+        "Directorate": emp.directorate || "",
+        "Org Unit": emp.orgUnit || "",
+        "Grade": emp.grade || "",
+        "Employment Status": emp.employmentStatus || "",
+        "Join Date": emp.joinDate ? new Date(emp.joinDate).toLocaleDateString('id-ID') : "",
+        "Terminate Date": emp.terminateDate ? new Date(emp.terminateDate).toLocaleDateString('id-ID') : "",
+        "Length of Service": emp.lengthOfService || "",
+        "Tax Status": emp.taxStatus || "",
       };
 
-      // Process each selected field by NAME
+      // ✅ Then add selected additional fields from JSON data
+      const salaryData = emp.salaryData as any;
+      const allowanceData = emp.allowanceData as any;
+      const deductionData = emp.deductionData as any;
+      const neutralData = emp.neutralData as any;
+
       selectedFields.forEach((fieldName) => {
-        let value: any = null;
-
-        // ✅ Check if it's a dedicated field (metadata)
-        switch (fieldName) {
-          case "Name":
-            value = emp.name;
-            break;
-          case "Employee No":
-            value = emp.employeeNo;
-            break;
-          case "Gender":
-            value = emp.gender;
-            break;
-          case "No KTP":
-            value = emp.noKTP;
-            break;
-          case "Gov. Tax File No.":
-            value = emp.taxFileNo;
-            break;
-          case "Position":
-            value = emp.position;
-            break;
-          case "Directorate":
-            value = emp.directorate;
-            break;
-          case "Org Unit":
-            value = emp.orgUnit;
-            break;
-          case "Grade":
-            value = emp.grade;
-            break;
-          case "Employment Status":
-            value = emp.employmentStatus;
-            break;
-          case "Join Date":
-            value = emp.joinDate ? new Date(emp.joinDate).toLocaleDateString('id-ID') : null;
-            break;
-          case "Terminate Date":
-            value = emp.terminateDate ? new Date(emp.terminateDate).toLocaleDateString('id-ID') : null;
-            break;
-          case "Length of Service":
-            value = emp.lengthOfService;
-            break;
-          case "Tax Status":
-            value = emp.taxStatus;
-            break;
-          
-          // ✅ If not a dedicated field, search in JSON data
-          default:
-            const salaryData = emp.salaryData as any;
-            const allowanceData = emp.allowanceData as any;
-            const deductionData = emp.deductionData as any;
-            const neutralData = emp.neutralData as any;
-
-            // Search by field NAME in all JSON fields
-            if (salaryData && salaryData[fieldName] !== undefined) {
-              value = salaryData[fieldName];
-            } else if (allowanceData && allowanceData[fieldName] !== undefined) {
-              value = allowanceData[fieldName];
-            } else if (deductionData && deductionData[fieldName] !== undefined) {
-              value = deductionData[fieldName];
-            } else if (neutralData && neutralData[fieldName] !== undefined) {
-              value = neutralData[fieldName];
-            }
-            break;
+        // Skip if already in basic fields above
+        if (row[fieldName] !== undefined) {
+          return;
         }
 
-        // Add to row with field name as column header
+        // Search in JSON data by field NAME
+        let value: any = null;
+
+        if (salaryData && salaryData[fieldName] !== undefined) {
+          value = salaryData[fieldName];
+        } else if (allowanceData && allowanceData[fieldName] !== undefined) {
+          value = allowanceData[fieldName];
+        } else if (deductionData && deductionData[fieldName] !== undefined) {
+          value = deductionData[fieldName];
+        } else if (neutralData && neutralData[fieldName] !== undefined) {
+          value = neutralData[fieldName];
+        }
+
         row[fieldName] = value ?? "";
       });
 
@@ -133,21 +104,16 @@ export async function GET(
     });
 
     console.log('Excel data prepared');
-    console.log(`First row sample:`, Object.keys(excelData[0] || {}).slice(0, 10).join(', '));
-    console.log(`First row columns: ${Object.keys(excelData[0] || {}).length}`);
-    console.log(`Expected columns: ${selectedFields.length + 1} (including "No")`);
-
-    if (Object.keys(excelData[0] || {}).length !== selectedFields.length + 1) {
-      console.warn('⚠️  Column count mismatch!');
-    } else {
-      console.log('✅ Column count matches!');
-    }
+    console.log(`Total columns: ${Object.keys(excelData[0] || {}).length}`);
+    console.log(`Basic fields (always included): 14`);
+    console.log(`Additional selected fields: ${selectedFields.length}`);
+    console.log(`First 20 columns:`, Object.keys(excelData[0] || {}).slice(0, 20).join(', '));
 
     // Create workbook
     const wb = XLSX.utils.book_new();
     const ws = XLSX.utils.json_to_sheet(excelData);
 
-    // Auto-size columns (optional, for better readability)
+    // Auto-size columns
     const maxWidth = 50;
     const colWidths = Object.keys(excelData[0] || {}).map(key => {
       const maxLength = Math.max(
@@ -166,7 +132,7 @@ export async function GET(
     // Generate buffer
     const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
 
-    console.log(`✅ Report generated successfully`);
+    console.log(`✅ Report generated successfully: ${buffer.length} bytes`);
     console.log('=== DOWNLOAD COMPLETE ===\n');
 
     // Return file
