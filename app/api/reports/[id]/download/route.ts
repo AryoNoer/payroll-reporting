@@ -1,5 +1,4 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-/* eslint-disable @typescript-eslint/no-explicit-any */
 
 // app/api/reports/[id]/download/route.ts
 import { NextRequest, NextResponse } from "next/server";
