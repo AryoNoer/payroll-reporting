@@ -5,6 +5,7 @@ import { useState } from "react";
 import { signIn } from "next-auth/react";
 import { useRouter } from "next/navigation";
 import { Package, Loader2 } from "lucide-react";
+import Image from "next/image";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -39,7 +40,7 @@ export default function LoginPage() {
   };
 
   return (
-    <div className="relative min-h-screen overflow-hidden bg-gradient-to-br from-slate-100 via-blue-50 to-indigo-100">
+    <div className="relative min-h-screen overflow-hidden bg-linear-to-br from-slate-100 via-blue-50 to-indigo-100">
       {/* Animated Background Blobs */}
       <div className="absolute inset-0 overflow-hidden pointer-events-none z-0">
         <div className="absolute -top-32 -right-32 w-96 h-96 bg-purple-400 rounded-full opacity-50 blur-3xl animate-blob"></div>
@@ -53,8 +54,9 @@ export default function LoginPage() {
           <div className="bg-white rounded-2xl shadow-xl p-8">
             {/* Logo & Title */}
             <div className="text-center mb-8">
-              <div className="inline-flex items-center justify-center w-16 h-16 bg-indigo-600 rounded-full mb-4">
-                <Package className="w-8 h-8 text-white" />
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full mb-4">
+                {/* <Package className="w-8 h-8 text-white" /> */}
+                <Image src="/folder.png" alt="Logo" width={64} height={64} />
               </div>
               <h1 className="text-2xl font-bold text-gray-900">
                 Dinda Reporting System

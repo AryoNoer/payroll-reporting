@@ -9,6 +9,7 @@ import {
   Clock,
   TrendingUp,
 } from "lucide-react";
+import Image from "next/image";
 
 export default function Home() {
   return (
@@ -35,16 +36,20 @@ export default function Home() {
 
             {/* Main Heading */}
             <div className="space-y-4">
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full mb-4">
+                {/* <Package className="w-8 h-8 text-white" /> */}
+                <Image src="/folder.png" alt="Logo" width={64} height={64} />
+              </div>
               <h1 className="text-5xl sm:text-6xl lg:text-7xl font-bold text-gray-900 leading-tight">
-                Kelola Report
+                Halo !
                 <span className="block bg-linear-to-r from-indigo-600 to-purple-600 bg-clip-text text-transparent">
-                  Lebih Mudah & Cepat
+                  Selamat datang di Dinda Reporting System
                 </span>
               </h1>
-              <p className="text-lg sm:text-xl text-gray-600 max-w-2xl mx-auto leading-relaxed">
+              {/* <p className="text-lg sm:text-xl text-gray-600 max-w-2xl mx-auto leading-relaxed">
                 Platform modern untuk mengelola data report, generate reports,
                 dan analisis kompensasi karyawan dengan mudah.
-              </p>
+              </p> */}
             </div>
 
             {/* CTA Buttons */}

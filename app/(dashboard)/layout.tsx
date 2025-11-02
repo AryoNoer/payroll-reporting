@@ -11,9 +11,9 @@ import {
   LogOut,
   Menu,
   X,
-  Package,
 } from "lucide-react";
 import { useState } from "react";
+import Image from "next/image";
 
 const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
@@ -58,8 +58,11 @@ export default function DashboardLayout({
         {/* Logo */}
         <div className="h-16 flex items-center justify-between px-6 border-b border-gray-200">
           <div className="flex items-center space-x-3">
-            <div className="w-10 h-10 bg-indigo-600 rounded-lg flex items-center justify-center">
-              <Package className="w-6 h-6 text-white" />
+            <div className="w-10 h-10 rounded-lg flex items-center justify-center">
+              <div className="inline-flex items-center justify-center w-16 h-16 rounded-full mb-4 mt-4">
+                {/* <Package className="w-8 h-8 text-white" /> */}
+                <Image src="/folder.png" alt="Logo" width={64} height={64} />
+              </div>
             </div>
             <span className="font-semibold text-gray-900">Dinda Report</span>
           </div>
