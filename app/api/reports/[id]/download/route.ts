@@ -4,17 +4,22 @@
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
-import * as XLSX from "xlsx";
+import { generateTemplatedExcel, workbookToBuffer, getCategorySummary } from "@/lib/excel-template";
+import { categorizeFields } from "@/lib/field-categories";
+import { applyCalculationsAndDerivations } from "@/lib/field-calculations";
+import { OUTPUT_FIELDS } from "@/lib/output-fields"; // ✅ Import complete field list
 
 export async function GET(
   request: NextRequest,
-  { params }: { params: Promise<{ id: string }> } // ✅ Changed to Promise
+  { params }: { params: Promise<{ id: string }> }
 ) {
   try {
     const user = await requireAuth();
-    const { id: reportId } = await params; // ✅ Await params
+    const { id: reportId } = await params;
 
-    console.log('\n=== GENERATING REPORT DOWNLOAD ===');
+    console.log('\n' + '='.repeat(60));
+    console.log('📊 GENERATING COMPLETE REPORT (ALL 362+ COLUMNS)');
+    console.log('='.repeat(60));
     console.log(`Report ID: ${reportId}`);
 
     // Get report
@@ -35,104 +40,106 @@ export async function GET(
       );
     }
 
-    console.log(`Report: ${report.name}`);
-    console.log(`Upload: ${report.upload.originalName}`);
+    console.log(`✓ Report: ${report.name}`);
+    console.log(`✓ Upload: ${report.upload.originalName}`);
 
     // Get employees data
     const employees = await prisma.employee.findMany({
       where: { uploadId: report.uploadId },
+      orderBy: { employeeNo: 'asc' }
     });
 
-    console.log(`Employees: ${employees.length} rows`);
+    console.log(`✓ Employees: ${employees.length} rows`);
 
-    // Get selected fields (these are field NAMES, not codes)
-    const selectedFields = report.selectedFields as string[];
-    console.log(`Selected fields: ${selectedFields.length} fields`);
-    console.log(`Sample selected fields:`, selectedFields.slice(0, 10).join(', '));
+    // ✅ USE COMPLETE OUTPUT_FIELDS (All 362+ columns)
+    // This ensures ALL columns are present, even if data is empty
+    const allFieldNames = OUTPUT_FIELDS;
 
-    // ✅ Build Excel data - ALWAYS include basic fields + selected fields
+    console.log(`✓ Total columns (COMPLETE): ${allFieldNames.length}`);
+
+    // Build data rows
+    console.log('\n📋 Building data rows with ALL columns...');
     const excelData = employees.map((emp, index) => {
-      // ✅ ALWAYS include these basic/metadata fields FIRST
+      // Start with raw data object
       const row: any = {
-        "No": index + 1,
-        "Name": emp.name,
-        "Employee No": emp.employeeNo,
-        "Gender": emp.gender || "",
-        "No KTP": emp.noKTP || "",
-        "Gov. Tax File No.": emp.taxFileNo || "",
-        "Position": emp.position || "",
-        "Directorate": emp.directorate || "",
-        "Org Unit": emp.orgUnit || "",
-        "Grade": emp.grade || "",
-        "Employment Status": emp.employmentStatus || "",
-        "Join Date": emp.joinDate ? new Date(emp.joinDate).toLocaleDateString('id-ID') : "",
-        "Terminate Date": emp.terminateDate ? new Date(emp.terminateDate).toLocaleDateString('id-ID') : "",
-        "Length of Service": emp.lengthOfService || "",
-        "Tax Status": emp.taxStatus || "",
+        'No': index + 1,
+        // Dedicated fields from Employee model
+        'Name': emp.name,
+        'Employee No': emp.employeeNo,
+        'Gender': emp.gender,
+        'No KTP': emp.noKTP,
+        'Gov. Tax File No.': emp.taxFileNo,
+        'Position': emp.position,
+        'Directorate': emp.directorate,
+        'Org Unit': emp.orgUnit,
+        'Grade': emp.grade,
+        'Employment Status': emp.employmentStatus,
+        'Join Date': emp.joinDate ? new Date(emp.joinDate).toLocaleDateString('id-ID') : '',
+        'Terminate Date': emp.terminateDate ? new Date(emp.terminateDate).toLocaleDateString('id-ID') : '',
+        'Length Of Service': emp.lengthOfService,
+        'Tax Status': emp.taxStatus,
       };
 
-      // ✅ Then add selected additional fields from JSON data
-      const salaryData = emp.salaryData as any;
-      const allowanceData = emp.allowanceData as any;
-      const deductionData = emp.deductionData as any;
-      const neutralData = emp.neutralData as any;
+      // Merge all JSON fields into one object
+      const salaryData = (emp.salaryData as any) || {};
+      const allowanceData = (emp.allowanceData as any) || {};
+      const deductionData = (emp.deductionData as any) || {};
+      const neutralData = (emp.neutralData as any) || {};
 
-      selectedFields.forEach((fieldName) => {
-        // Skip if already in basic fields above
-        if (row[fieldName] !== undefined) {
-          return;
-        }
+      // Merge all data
+      Object.assign(row, salaryData, allowanceData, deductionData, neutralData);
 
-        // Search in JSON data by field NAME
-        let value: any = null;
+      // ✅ Apply calculations and derivations (including Cost Center By Function)
+      const processedRow = applyCalculationsAndDerivations(row);
 
-        if (salaryData && salaryData[fieldName] !== undefined) {
-          value = salaryData[fieldName];
-        } else if (allowanceData && allowanceData[fieldName] !== undefined) {
-          value = allowanceData[fieldName];
-        } else if (deductionData && deductionData[fieldName] !== undefined) {
-          value = deductionData[fieldName];
-        } else if (neutralData && neutralData[fieldName] !== undefined) {
-          value = neutralData[fieldName];
-        }
-
-        row[fieldName] = value ?? "";
+      // ✅ Build final row with ALL OUTPUT_FIELDS (empty string if no data)
+      const finalRow: any = {};
+      allFieldNames.forEach(fieldName => {
+        // Use processed value if exists, otherwise empty string
+        finalRow[fieldName] = processedRow[fieldName] ?? '';
       });
 
-      return row;
+      return finalRow;
     });
 
-    console.log('Excel data prepared');
-    console.log(`Total columns: ${Object.keys(excelData[0] || {}).length}`);
-    console.log(`Basic fields (always included): 14`);
-    console.log(`Additional selected fields: ${selectedFields.length}`);
-    console.log(`First 20 columns:`, Object.keys(excelData[0] || {}).slice(0, 20).join(', '));
+    console.log(`✓ Data rows built: ${excelData.length} rows x ${allFieldNames.length} columns`);
 
-    // Create workbook
-    const wb = XLSX.utils.book_new();
-    const ws = XLSX.utils.json_to_sheet(excelData);
+    // Count how many fields have data vs empty
+    const sampleRow = excelData[0] || {};
+    const fieldsWithData = Object.values(sampleRow).filter(v => v !== '' && v !== null && v !== 0).length;
+    const emptyFields = allFieldNames.length - fieldsWithData;
+    
+    console.log(`\n📊 Data Coverage:`);
+    console.log(`  - Fields with data: ${fieldsWithData}`);
+    console.log(`  - Empty fields: ${emptyFields}`);
+    console.log(`  - Coverage: ${((fieldsWithData / allFieldNames.length) * 100).toFixed(1)}%`);
 
-    // Auto-size columns
-    const maxWidth = 50;
-    const colWidths = Object.keys(excelData[0] || {}).map(key => {
-      const maxLength = Math.max(
-        key.length,
-        ...excelData.slice(0, 100).map(row => 
-          String(row[key] || "").length
-        )
-      );
-      return { wch: Math.min(maxLength + 2, maxWidth) };
+    // Get category summary for logging
+    const fieldCategories = categorizeFields(allFieldNames);
+    const summary = getCategorySummary(allFieldNames, fieldCategories);
+    
+    console.log('\n📊 Field Distribution by Category:');
+    Object.entries(summary)
+      .sort((a, b) => b[1] - a[1])
+      .forEach(([category, count]) => {
+        console.log(`  - ${category}: ${count} fields`);
+      });
+
+    // Generate Excel with 4-level hierarchical headers
+    console.log('\n📄 Generating Excel with templated headers...');
+    const wb = generateTemplatedExcel(excelData, allFieldNames, {
+      sheetName: 'Report',
+      autoWidth: true,
+      maxWidth: 50
     });
-    ws['!cols'] = colWidths;
 
-    // Add worksheet to workbook
-    XLSX.utils.book_append_sheet(wb, ws, "Report");
+    // Convert to buffer
+    const buffer = workbookToBuffer(wb);
 
-    // Generate buffer
-    const buffer = XLSX.write(wb, { type: "buffer", bookType: "xlsx" });
-
-    console.log(`✅ Report generated successfully: ${buffer.length} bytes`);
-    console.log('=== DOWNLOAD COMPLETE ===\n');
+    console.log(`✓ Excel generated: ${(buffer.length / 1024).toFixed(2)} KB`);
+    console.log('='.repeat(60));
+    console.log('✅ DOWNLOAD COMPLETE - ALL COLUMNS INCLUDED');
+    console.log('='.repeat(60) + '\n');
 
     // Return file
     const sanitizedName = report.name.replace(/[^a-zA-Z0-9-_\s]/g, '_');
@@ -143,9 +150,17 @@ export async function GET(
       },
     });
   } catch (error) {
-    console.error("❌ Download error:", error);
+    console.error('\n' + '='.repeat(60));
+    console.error("❌ DOWNLOAD ERROR");
+    console.error('='.repeat(60));
+    console.error(error);
+    console.error('='.repeat(60) + '\n');
+    
     return NextResponse.json(
-      { error: "Failed to download report" },
+      { 
+        error: "Failed to download report",
+        message: error instanceof Error ? error.message : "Unknown error"
+      },
       { status: 500 }
     );
   }

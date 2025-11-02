@@ -61,7 +61,7 @@ export default function DashboardLayout({
             <div className="w-10 h-10 bg-indigo-600 rounded-lg flex items-center justify-center">
               <Package className="w-6 h-6 text-white" />
             </div>
-            <span className="font-semibold text-gray-900">Payroll</span>
+            <span className="font-semibold text-gray-900">Dinda Report</span>
           </div>
           <button
             onClick={() => setSidebarOpen(false)}

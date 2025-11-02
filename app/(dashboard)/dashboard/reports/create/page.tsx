@@ -3,7 +3,15 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { Search, Loader2, ChevronLeft, FileText } from "lucide-react";
+import {
+  Search,
+  Loader2,
+  ChevronLeft,
+  FileText,
+  CheckCircle,
+  XCircle,
+  X,
+} from "lucide-react";
 
 interface Upload {
   id: string;
@@ -17,6 +25,20 @@ interface Component {
   code: string;
   name: string;
   type: string;
+}
+
+interface Toast {
+  id: number;
+  type: "success" | "error" | "warning";
+  message: string;
+}
+
+interface Modal {
+  show: boolean;
+  type: "success" | "error" | "warning";
+  title: string;
+  message: string;
+  onConfirm?: () => void;
 }
 
 export default function CreateReportPage() {
@@ -40,16 +62,52 @@ export default function CreateReportPage() {
   const [loading, setLoading] = useState(false);
   const [generating, setGenerating] = useState(false);
 
+  // UI State
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const [modal, setModal] = useState<Modal>({
+    show: false,
+    type: "success",
+    title: "",
+    message: "",
+  });
+
   useEffect(() => {
     fetchUploads();
   }, []);
 
-  // Fetch available fields when upload is selected
   useEffect(() => {
     if (selectedUpload && step === 2) {
       fetchAvailableFields();
     }
   }, [selectedUpload, step]);
+
+  const showToast = (
+    type: "success" | "error" | "warning",
+    message: string
+  ) => {
+    const id = Date.now();
+    setToasts((prev) => [...prev, { id, type, message }]);
+
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4000);
+  };
+
+  const showModal = (
+    type: "success" | "error" | "warning",
+    title: string,
+    message: string,
+    onConfirm?: () => void
+  ) => {
+    setModal({ show: true, type, title, message, onConfirm });
+  };
+
+  const closeModal = () => {
+    setModal({ ...modal, show: false });
+    if (modal.onConfirm) {
+      modal.onConfirm();
+    }
+  };
 
   const fetchUploads = async () => {
     try {
@@ -58,6 +116,7 @@ export default function CreateReportPage() {
       setUploads(data);
     } catch (error) {
       console.error("Error fetching uploads:", error);
+      showToast("error", "Failed to load data sources");
     }
   };
 
@@ -69,7 +128,6 @@ export default function CreateReportPage() {
       const response = await fetch(`/api/uploads/${selectedUpload}/fields`);
       const data = await response.json();
 
-      // Flatten all categorized fields into single array
       const allFields: Component[] = [
         ...(data.salary || []),
         ...(data.allowance || []),
@@ -77,10 +135,17 @@ export default function CreateReportPage() {
         ...(data.neutral || []),
       ];
 
-      console.log(`✅ Loaded ${allFields.length} available fields from upload`);
-      setComponents(allFields);
+      const uniqueFields = Array.from(
+        new Map(allFields.map((field) => [field.name, field])).values()
+      );
+
+      console.log(
+        `✅ Loaded ${uniqueFields.length} unique fields from ${allFields.length} total`
+      );
+      setComponents(uniqueFields);
     } catch (error) {
       console.error("Error fetching available fields:", error);
+      showToast("error", "Failed to load fields");
       fetchMasterComponents();
     } finally {
       setLoading(false);
@@ -105,7 +170,6 @@ export default function CreateReportPage() {
     return matchesSearch && matchesType;
   });
 
-  // ✅ FIX: Toggle by field NAME, not CODE
   const toggleField = (fieldName: string) => {
     const newSet = new Set(selectedFields);
     if (newSet.has(fieldName)) {
@@ -114,24 +178,22 @@ export default function CreateReportPage() {
       newSet.add(fieldName);
     }
     setSelectedFields(newSet);
-    console.log(`Field toggled: ${fieldName}. Total selected: ${newSet.size}`);
   };
 
-  // ✅ FIX: Select all by field NAME
   const selectAll = () => {
     const allNames = filteredComponents.map((c) => c.name);
     setSelectedFields(new Set(allNames));
-    console.log(`✅ Selected all: ${allNames.length} fields`);
+    showToast("success", `Selected ${allNames.length} fields`);
   };
 
   const deselectAll = () => {
     setSelectedFields(new Set());
-    console.log("✅ Cleared all selections");
+    showToast("success", "All selections cleared");
   };
 
   const handleGenerateReport = async () => {
     if (!selectedUpload || selectedFields.size === 0 || !reportName) {
-      alert("Please complete all fields");
+      showToast("warning", "Please complete all required fields");
       return;
     }
 
@@ -139,7 +201,6 @@ export default function CreateReportPage() {
     console.log(`Upload ID: ${selectedUpload}`);
     console.log(`Report Name: ${reportName}`);
     console.log(`Selected Fields: ${selectedFields.size}`);
-    console.log(`Sample fields:`, Array.from(selectedFields).slice(0, 10));
 
     setGenerating(true);
     try {
@@ -150,23 +211,37 @@ export default function CreateReportPage() {
           uploadId: selectedUpload,
           name: reportName,
           description: reportDescription,
-          selectedFields: Array.from(selectedFields), // ✅ Field NAMES
+          selectedFields: Array.from(selectedFields),
         }),
       });
 
       if (response.ok) {
         const result = await response.json();
         console.log("✅ Report created:", result);
-        alert("Report generated successfully!");
-        router.push("/dashboard/reports");
+
+        showModal(
+          "success",
+          "Report Generated Successfully!",
+          `Your report "${reportName}" has been created with ${selectedFields.size} fields.`,
+          () => router.push("/dashboard/reports")
+        );
       } else {
         const error = await response.json();
         console.error("❌ Report creation failed:", error);
-        alert(`Failed to generate report: ${error.message || error.error}`);
+
+        showModal(
+          "error",
+          "Report Generation Failed",
+          error.message || error.error || "An unexpected error occurred"
+        );
       }
     } catch (error) {
       console.error("❌ Network error:", error);
-      alert("Error generating report");
+      showModal(
+        "error",
+        "Network Error",
+        "Failed to connect to the server. Please try again."
+      );
     } finally {
       setGenerating(false);
     }
@@ -174,6 +249,117 @@ export default function CreateReportPage() {
 
   return (
     <div className="space-y-8">
+      {/* Toast Notifications */}
+      <div className="fixed top-4 right-4 z-50 space-y-2">
+        {toasts.map((toast) => (
+          <div
+            key={toast.id}
+            className={`flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg animate-in slide-in-from-right duration-300 min-w-[300px] ${
+              toast.type === "success"
+                ? "bg-green-50 border border-green-200"
+                : toast.type === "error"
+                ? "bg-red-50 border border-red-200"
+                : "bg-yellow-50 border border-yellow-200"
+            }`}
+          >
+            {toast.type === "success" && (
+              <CheckCircle className="w-5 h-5 text-green-600 shrink-0" />
+            )}
+            {toast.type === "error" && (
+              <XCircle className="w-5 h-5 text-red-600 shrink-0" />
+            )}
+            {toast.type === "warning" && (
+              <XCircle className="w-5 h-5 text-yellow-600 shrink-0" />
+            )}
+            <span
+              className={`text-sm font-medium ${
+                toast.type === "success"
+                  ? "text-green-800"
+                  : toast.type === "error"
+                  ? "text-red-800"
+                  : "text-yellow-800"
+              }`}
+            >
+              {toast.message}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* Modal */}
+      {modal.show && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full animate-in zoom-in duration-200">
+            {/* Modal Header */}
+            <div
+              className={`px-6 py-4 border-b flex items-center justify-between ${
+                modal.type === "success"
+                  ? "bg-green-50 border-green-200"
+                  : modal.type === "error"
+                  ? "bg-red-50 border-red-200"
+                  : "bg-yellow-50 border-yellow-200"
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                {modal.type === "success" && (
+                  <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
+                    <CheckCircle className="w-6 h-6 text-green-600" />
+                  </div>
+                )}
+                {modal.type === "error" && (
+                  <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+                    <XCircle className="w-6 h-6 text-red-600" />
+                  </div>
+                )}
+                {modal.type === "warning" && (
+                  <div className="w-10 h-10 bg-yellow-100 rounded-full flex items-center justify-center">
+                    <XCircle className="w-6 h-6 text-yellow-600" />
+                  </div>
+                )}
+                <h3
+                  className={`text-lg font-semibold ${
+                    modal.type === "success"
+                      ? "text-green-900"
+                      : modal.type === "error"
+                      ? "text-red-900"
+                      : "text-yellow-900"
+                  }`}
+                >
+                  {modal.title}
+                </h3>
+              </div>
+              <button
+                onClick={closeModal}
+                className="p-1 hover:bg-white/50 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="px-6 py-4">
+              <p className="text-gray-700">{modal.message}</p>
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 bg-gray-50 rounded-b-xl flex justify-end gap-3">
+              <button
+                onClick={closeModal}
+                className={`px-6 py-2 rounded-lg font-medium transition-colors ${
+                  modal.type === "success"
+                    ? "bg-green-600 text-white hover:bg-green-700"
+                    : modal.type === "error"
+                    ? "bg-red-600 text-white hover:bg-red-700"
+                    : "bg-yellow-600 text-white hover:bg-yellow-700"
+                }`}
+              >
+                {modal.type === "success" ? "Go to Reports" : "Close"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div className="flex items-center space-x-4">
         <button
@@ -327,7 +513,7 @@ export default function CreateReportPage() {
               <div className="divide-y divide-gray-200">
                 {filteredComponents.map((comp) => (
                   <label
-                    key={comp.id}
+                    key={`${comp.code}-${comp.name}`}
                     className="flex items-center space-x-3 p-4 hover:bg-gray-50 cursor-pointer"
                   >
                     <input

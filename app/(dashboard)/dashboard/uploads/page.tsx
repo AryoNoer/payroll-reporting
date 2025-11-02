@@ -23,6 +23,7 @@ interface UploadItem {
   rowCount: number;
   period: string;
   status: "PROCESSING" | "COMPLETED" | "FAILED";
+  progress: number;
   uploadedAt: string;
   errorMessage?: string;
 }
@@ -33,6 +34,21 @@ interface UploadError {
   details?: any;
 }
 
+interface Toast {
+  id: number;
+  type: "success" | "error" | "warning" | "info";
+  message: string;
+}
+
+interface Modal {
+  show: boolean;
+  type: "success" | "error" | "warning" | "info";
+  title: string;
+  message: string;
+  details?: any;
+  onConfirm?: () => void;
+}
+
 export default function UploadsPage() {
   const [file, setFile] = useState<File | null>(null);
   const [period, setPeriod] = useState("");
@@ -41,10 +57,115 @@ export default function UploadsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<UploadError | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+
+  // UI State
+  const [toasts, setToasts] = useState<Toast[]>([]);
+  const [modal, setModal] = useState<Modal>({
+    show: false,
+    type: "success",
+    title: "",
+    message: "",
+  });
+  const toastIdCounter = useRef(0);
 
   useEffect(() => {
     fetchUploads();
   }, []);
+
+  // 🎯 POLLING MECHANISM - Auto-refresh processing uploads
+  useEffect(() => {
+    const processingUploads = uploads.filter((u) => u.status === "PROCESSING");
+
+    if (processingUploads.length > 0) {
+      pollingIntervalRef.current = setInterval(() => {
+        pollProcessingUploads(processingUploads.map((u) => u.id));
+      }, 2000);
+    } else {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+        pollingIntervalRef.current = null;
+      }
+    }
+
+    return () => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+      }
+    };
+  }, [uploads]);
+
+  const showToast = (type: Toast["type"], message: string) => {
+    const id = ++toastIdCounter.current;
+    setToasts((prev) => [...prev, { id, type, message }]);
+
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 4000);
+  };
+
+  const showModal = (
+    type: Modal["type"],
+    title: string,
+    message: string,
+    details?: any,
+    onConfirm?: () => void
+  ) => {
+    setModal({ show: true, type, title, message, details, onConfirm });
+  };
+
+  const closeModal = () => {
+    setModal({ ...modal, show: false });
+    if (modal.onConfirm) {
+      modal.onConfirm();
+    }
+  };
+
+  const pollProcessingUploads = async (uploadIds: string[]) => {
+    try {
+      const responses = await Promise.all(
+        uploadIds.map((id) =>
+          fetch(`/api/uploads/${id}/status`).then((res) => res.json())
+        )
+      );
+
+      setUploads((prevUploads) =>
+        prevUploads.map((upload) => {
+          const updated = responses.find((r) => r.id === upload.id);
+          if (updated) {
+            // Show toast when processing completes
+            if (
+              upload.status === "PROCESSING" &&
+              updated.status === "COMPLETED"
+            ) {
+              showToast(
+                "success",
+                `Processing completed for ${upload.originalName}`
+              );
+            } else if (
+              upload.status === "PROCESSING" &&
+              updated.status === "FAILED"
+            ) {
+              showToast(
+                "error",
+                `Processing failed for ${upload.originalName}`
+              );
+            }
+
+            return {
+              ...upload,
+              status: updated.status,
+              progress: updated.progress || 0,
+              errorMessage: updated.errorMessage,
+            };
+          }
+          return upload;
+        })
+      );
+    } catch (err) {
+      console.error("Polling error:", err);
+    }
+  };
 
   const fetchUploads = async () => {
     try {
@@ -58,14 +179,12 @@ export default function UploadsPage() {
 
       const data = await response.json();
 
-      // Validate response is array
       if (Array.isArray(data)) {
         setUploads(data);
       } else {
         console.error("Invalid response format:", data);
         setUploads([]);
 
-        // Show error if response contains error message
         if (data.error) {
           setError({
             message: "Failed to load uploads: " + data.error,
@@ -76,10 +195,7 @@ export default function UploadsPage() {
     } catch (err) {
       console.error("Error fetching uploads:", err);
       setUploads([]);
-      setError({
-        message: "Failed to load upload history",
-        code: "NETWORK_ERROR",
-      });
+      showToast("error", "Failed to load upload history");
     } finally {
       setLoading(false);
     }
@@ -89,33 +205,24 @@ export default function UploadsPage() {
     const selectedFile = e.target.files?.[0];
     if (selectedFile) {
       if (!selectedFile.name.endsWith(".csv")) {
-        setError({
-          message: "Please select a CSV file",
-          code: "INVALID_FILE_TYPE",
-        });
+        showToast("error", "Please select a CSV file");
         return;
       }
 
-      // Check file size (max 20MB)
       if (selectedFile.size > 20 * 1024 * 1024) {
-        setError({
-          message: "File size exceeds 20MB limit",
-          code: "FILE_TOO_LARGE",
-        });
+        showToast("error", "File size exceeds 20MB limit");
         return;
       }
 
       setFile(selectedFile);
       setError(null);
+      showToast("success", `File selected: ${selectedFile.name}`);
     }
   };
 
   const handleUpload = async () => {
     if (!file || !period) {
-      setError({
-        message: "Please select a file and period",
-        code: "MISSING_INPUTS",
-      });
+      showToast("warning", "Please select a file and period");
       return;
     }
 
@@ -135,6 +242,12 @@ export default function UploadsPage() {
       const data = await response.json();
 
       if (!response.ok) {
+        showModal(
+          "error",
+          "Upload Failed",
+          data.error || "Failed to upload file",
+          data.details
+        );
         setError({
           message: data.error || "Upload failed",
           code: data.code,
@@ -143,19 +256,24 @@ export default function UploadsPage() {
         return;
       }
 
-      // Success
-      alert("File uploaded successfully! Processing in background...");
-      setFile(null);
-      setPeriod("");
-      if (fileInputRef.current) fileInputRef.current.value = "";
-
-      // Refresh upload list
-      setTimeout(fetchUploads, 1000);
+      showModal(
+        "success",
+        "File Uploaded Successfully!",
+        `Your file "${file.name}" has been uploaded and processing will start automatically.`,
+        undefined,
+        () => {
+          setFile(null);
+          setPeriod("");
+          if (fileInputRef.current) fileInputRef.current.value = "";
+          setTimeout(fetchUploads, 1000);
+        }
+      );
     } catch (err) {
-      setError({
-        message: "Network error. Please try again.",
-        code: "NETWORK_ERROR",
-      });
+      showModal(
+        "error",
+        "Network Error",
+        "Failed to connect to the server. Please check your connection and try again."
+      );
       console.error(err);
     } finally {
       setUploading(false);
@@ -164,6 +282,146 @@ export default function UploadsPage() {
 
   return (
     <div className="space-y-8">
+      {/* Toast Notifications */}
+      <div className="fixed top-4 right-4 z-50 space-y-2">
+        {toasts.map((toast) => (
+          <div
+            key={toast.id}
+            className={`flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg animate-in slide-in-from-right duration-300 min-w-[300px] ${
+              toast.type === "success"
+                ? "bg-green-50 border border-green-200"
+                : toast.type === "error"
+                ? "bg-red-50 border border-red-200"
+                : toast.type === "warning"
+                ? "bg-yellow-50 border border-yellow-200"
+                : "bg-blue-50 border border-blue-200"
+            }`}
+          >
+            {toast.type === "success" && (
+              <CheckCircle className="w-5 h-5 text-green-600 shrink-0" />
+            )}
+            {toast.type === "error" && (
+              <XCircle className="w-5 h-5 text-red-600 shrink-0" />
+            )}
+            {toast.type === "warning" && (
+              <AlertCircle className="w-5 h-5 text-yellow-600 shrink-0" />
+            )}
+            {toast.type === "info" && (
+              <AlertCircle className="w-5 h-5 text-blue-600 shrink-0" />
+            )}
+            <span
+              className={`text-sm font-medium ${
+                toast.type === "success"
+                  ? "text-green-800"
+                  : toast.type === "error"
+                  ? "text-red-800"
+                  : toast.type === "warning"
+                  ? "text-yellow-800"
+                  : "text-blue-800"
+              }`}
+            >
+              {toast.message}
+            </span>
+          </div>
+        ))}
+      </div>
+
+      {/* Modal */}
+      {modal.show && (
+        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
+          <div className="bg-white rounded-xl shadow-2xl max-w-md w-full animate-in zoom-in duration-200">
+            {/* Modal Header */}
+            <div
+              className={`px-6 py-4 border-b flex items-center justify-between ${
+                modal.type === "success"
+                  ? "bg-green-50 border-green-200"
+                  : modal.type === "error"
+                  ? "bg-red-50 border-red-200"
+                  : modal.type === "warning"
+                  ? "bg-yellow-50 border-yellow-200"
+                  : "bg-blue-50 border-blue-200"
+              }`}
+            >
+              <div className="flex items-center gap-3">
+                {modal.type === "success" && (
+                  <div className="w-10 h-10 bg-green-100 rounded-full flex items-center justify-center">
+                    <CheckCircle className="w-6 h-6 text-green-600" />
+                  </div>
+                )}
+                {modal.type === "error" && (
+                  <div className="w-10 h-10 bg-red-100 rounded-full flex items-center justify-center">
+                    <XCircle className="w-6 h-6 text-red-600" />
+                  </div>
+                )}
+                {modal.type === "warning" && (
+                  <div className="w-10 h-10 bg-yellow-100 rounded-full flex items-center justify-center">
+                    <AlertCircle className="w-6 h-6 text-yellow-600" />
+                  </div>
+                )}
+                {modal.type === "info" && (
+                  <div className="w-10 h-10 bg-blue-100 rounded-full flex items-center justify-center">
+                    <AlertCircle className="w-6 h-6 text-blue-600" />
+                  </div>
+                )}
+                <h3
+                  className={`text-lg font-semibold ${
+                    modal.type === "success"
+                      ? "text-green-900"
+                      : modal.type === "error"
+                      ? "text-red-900"
+                      : modal.type === "warning"
+                      ? "text-yellow-900"
+                      : "text-blue-900"
+                  }`}
+                >
+                  {modal.title}
+                </h3>
+              </div>
+              <button
+                onClick={closeModal}
+                className="p-1 hover:bg-white/50 rounded-lg transition-colors"
+              >
+                <X className="w-5 h-5 text-gray-500" />
+              </button>
+            </div>
+
+            {/* Modal Body */}
+            <div className="px-6 py-4">
+              <p className="text-gray-700">{modal.message}</p>
+
+              {modal.details && (
+                <details className="mt-3">
+                  <summary className="text-sm text-gray-600 cursor-pointer hover:text-gray-800 font-medium">
+                    View technical details
+                  </summary>
+                  <pre className="mt-2 text-xs bg-gray-100 p-3 rounded overflow-x-auto max-h-48">
+                    {JSON.stringify(modal.details, null, 2)}
+                  </pre>
+                </details>
+              )}
+            </div>
+
+            {/* Modal Footer */}
+            <div className="px-6 py-4 bg-gray-50 rounded-b-xl flex justify-end gap-3">
+              <button
+                onClick={closeModal}
+                className={`px-6 py-2 rounded-lg font-medium transition-colors ${
+                  modal.type === "success"
+                    ? "bg-green-600 text-white hover:bg-green-700"
+                    : modal.type === "error"
+                    ? "bg-red-600 text-white hover:bg-red-700"
+                    : modal.type === "warning"
+                    ? "bg-yellow-600 text-white hover:bg-yellow-700"
+                    : "bg-blue-600 text-white hover:bg-blue-700"
+                }`}
+              >
+                OK
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Header */}
       <div>
         <h1 className="text-3xl font-bold text-gray-900">Upload Data</h1>
@@ -244,7 +502,7 @@ export default function UploadsPage() {
               </label>
             </div>
             <p className="text-xs text-gray-500 mt-1">
-              Maximum file size: 10MB. Format: CSV only.
+              Maximum file size: 20MB. Format: CSV only.
             </p>
           </div>
 
@@ -307,11 +565,11 @@ export default function UploadsPage() {
                 className="p-6 hover:bg-gray-50 transition-colors"
               >
                 <div className="flex items-start justify-between">
-                  <div className="flex items-start space-x-4">
+                  <div className="flex items-start space-x-4 flex-1">
                     <div className="w-10 h-10 bg-indigo-100 rounded-lg flex items-center justify-center shrink-0">
                       <FileText className="w-5 h-5 text-indigo-600" />
                     </div>
-                    <div>
+                    <div className="flex-1">
                       <h3 className="font-medium text-gray-900">
                         {upload.originalName}
                       </h3>
@@ -330,6 +588,27 @@ export default function UploadsPage() {
                           )}
                         </span>
                       </div>
+
+                      {/* 🎯 PROGRESS BAR */}
+                      {upload.status === "PROCESSING" && (
+                        <div className="mt-3">
+                          <div className="flex items-center justify-between mb-1">
+                            <span className="text-sm font-medium text-indigo-600">
+                              Processing...
+                            </span>
+                            <span className="text-sm font-semibold text-indigo-600">
+                              {upload.progress}%
+                            </span>
+                          </div>
+                          <div className="w-full bg-gray-200 rounded-full h-2.5">
+                            <div
+                              className="bg-indigo-600 h-2.5 rounded-full transition-all duration-500 ease-out"
+                              style={{ width: `${upload.progress}%` }}
+                            ></div>
+                          </div>
+                        </div>
+                      )}
+
                       {upload.errorMessage && (
                         <div className="mt-2 p-2 bg-yellow-50 border border-yellow-200 rounded text-sm text-yellow-800">
                           <p className="font-medium">⚠ Warning:</p>
@@ -374,8 +653,8 @@ export default function UploadsPage() {
         <ul className="text-sm text-blue-800 space-y-1">
           <li>• Must be in CSV format (.csv)</li>
           <li>• Required columns: Name, Employee No</li>
-          <li>• Maximum file size: 10MB</li>
-          <li>• Check terminal/console for detailed error logs</li>
+          <li>• Maximum file size: 20MB</li>
+          <li>• Progress updates automatically every 2 seconds</li>
         </ul>
       </div>
     </div>

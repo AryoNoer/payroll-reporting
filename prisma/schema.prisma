@@ -1,5 +1,6 @@
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["jsonProtocol"] // ✅ Faster JSON queries
 }
 
 datasource db {
@@ -19,6 +20,7 @@ model User {
   reports   Report[]
   uploads   Upload[]
 
+  @@index([email]) // ✅ Faster login queries
   @@map("users")
 }
 
@@ -32,6 +34,8 @@ model Component {
   createdAt DateTime      @default(now())
   updatedAt DateTime      @updatedAt
 
+  @@index([name]) // ✅ Faster component lookup
+  @@index([type, isActive]) // ✅ Faster filtered queries
   @@map("components")
 }
 
@@ -43,6 +47,7 @@ model Upload {
   rowCount     Int
   period       DateTime
   status       UploadStatus @default(PROCESSING)
+  progress     Int          @default(0) // ← ADD THIS LINE (0-100%)
   errorMessage String?
   uploadedAt   DateTime     @default(now())
   userId       String
@@ -50,6 +55,9 @@ model Upload {
   reports      Report[]
   user         User         @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@index([userId]) // ✅ Faster user's uploads list
+  @@index([status]) // ✅ Faster status filtering
+  @@index([period]) // ✅ Faster period-based queries
   @@map("uploads")
 }
 
@@ -77,8 +85,10 @@ model Employee {
   createdAt        DateTime  @default(now())
   upload           Upload    @relation(fields: [uploadId], references: [id], onDelete: Cascade)
 
-  @@index([uploadId])
-  @@index([employeeNo])
+  @@index([uploadId]) // ✅ Already present - good!
+  @@index([employeeNo]) // ✅ Already present - good!
+  @@index([name]) // ✅ NEW: Faster name searches
+  @@index([uploadId, employeeNo]) // ✅ NEW: Composite index for report generation
   @@map("employees")
 }
 
@@ -96,6 +106,9 @@ model Report {
   upload         Upload   @relation(fields: [uploadId], references: [id], onDelete: Cascade)
   user           User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
+  @@index([userId]) // ✅ NEW: Faster user's reports list
+  @@index([uploadId]) // ✅ NEW: Faster upload-related reports
+  @@index([createdAt]) // ✅ NEW: Faster recent reports queries
   @@map("reports")
 }
 

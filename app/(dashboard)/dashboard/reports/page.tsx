@@ -2,7 +2,15 @@
 "use client";
 
 import { useState, useEffect } from "react";
-import { FileText, Download, Loader2, Plus, ChevronRight } from "lucide-react";
+import {
+  FileText,
+  Download,
+  Loader2,
+  Plus,
+  ChevronRight,
+  CheckCircle,
+  XCircle,
+} from "lucide-react";
 import Link from "next/link";
 import { format } from "date-fns";
 
@@ -18,9 +26,17 @@ interface Report {
   };
 }
 
+interface Toast {
+  id: number;
+  type: "success" | "error";
+  message: string;
+}
+
 export default function ReportsPage() {
   const [reports, setReports] = useState<Report[]>([]);
   const [loading, setLoading] = useState(true);
+  const [downloadingId, setDownloadingId] = useState<string | null>(null);
+  const [toasts, setToasts] = useState<Toast[]>([]);
 
   useEffect(() => {
     fetchReports();
@@ -38,9 +54,26 @@ export default function ReportsPage() {
     }
   };
 
+  const showToast = (type: "success" | "error", message: string) => {
+    const id = Date.now();
+    setToasts((prev) => [...prev, { id, type, message }]);
+
+    // Auto remove after 3 seconds
+    setTimeout(() => {
+      setToasts((prev) => prev.filter((t) => t.id !== id));
+    }, 3000);
+  };
+
   const handleDownload = async (reportId: string, reportName: string) => {
+    setDownloadingId(reportId);
+
     try {
       const response = await fetch(`/api/reports/${reportId}/download`);
+
+      if (!response.ok) {
+        throw new Error("Download failed");
+      }
+
       const blob = await response.blob();
       const url = window.URL.createObjectURL(blob);
       const a = document.createElement("a");
@@ -50,20 +83,51 @@ export default function ReportsPage() {
       a.click();
       document.body.removeChild(a);
       window.URL.revokeObjectURL(url);
+
+      showToast("success", `Report "${reportName}" downloaded successfully`);
     } catch (error) {
       console.error("Error downloading report:", error);
-      alert("Failed to download report");
+      showToast("error", "Failed to download report. Please try again.");
+    } finally {
+      setDownloadingId(null);
     }
   };
 
   return (
     <div className="space-y-8">
+      {/* Toast Notifications */}
+      <div className="fixed top-4 right-4 z-50 space-y-2">
+        {toasts.map((toast) => (
+          <div
+            key={toast.id}
+            className={`flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg animate-in slide-in-from-right duration-300 ${
+              toast.type === "success"
+                ? "bg-green-50 border border-green-200"
+                : "bg-red-50 border border-red-200"
+            }`}
+          >
+            {toast.type === "success" ? (
+              <CheckCircle className="w-5 h-5 text-green-600 shrink-0" />
+            ) : (
+              <XCircle className="w-5 h-5 text-red-600 shrink-0" />
+            )}
+            <span
+              className={`text-sm font-medium ${
+                toast.type === "success" ? "text-green-800" : "text-red-800"
+              }`}
+            >
+              {toast.message}
+            </span>
+          </div>
+        ))}
+      </div>
+
       {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-3xl font-bold text-gray-900">Reports</h1>
           <p className="text-gray-600 mt-2">
-            Generate and manage payroll reports
+            Generate and manage Monthly reports
           </p>
         </div>
         <Link
@@ -79,7 +143,10 @@ export default function ReportsPage() {
       <div className="bg-white rounded-xl shadow-sm border border-gray-200">
         <div className="divide-y divide-gray-200">
           {loading ? (
-            <div className="p-8 text-center text-gray-500">Loading...</div>
+            <div className="p-8 text-center text-gray-500">
+              <Loader2 className="w-8 h-8 animate-spin mx-auto mb-2 text-indigo-600" />
+              <p>Loading reports...</p>
+            </div>
           ) : reports.length === 0 ? (
             <div className="p-8 text-center">
               <FileText className="w-12 h-12 text-gray-400 mx-auto mb-4" />
@@ -132,10 +199,20 @@ export default function ReportsPage() {
 
                   <button
                     onClick={() => handleDownload(report.id, report.name)}
-                    className="flex items-center space-x-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors"
+                    disabled={downloadingId === report.id}
+                    className="flex items-center space-x-2 px-4 py-2 bg-indigo-600 text-white rounded-lg hover:bg-indigo-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-indigo-600"
                   >
-                    <Download className="w-4 h-4" />
-                    <span>Download</span>
+                    {downloadingId === report.id ? (
+                      <>
+                        <Loader2 className="w-4 h-4 animate-spin" />
+                        <span>Downloading...</span>
+                      </>
+                    ) : (
+                      <>
+                        <Download className="w-4 h-4" />
+                        <span>Download</span>
+                      </>
+                    )}
                   </button>
                 </div>
               </div>
