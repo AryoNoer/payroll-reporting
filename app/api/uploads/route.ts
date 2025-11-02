@@ -1,12 +1,6 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 // app/api/uploads/route.ts
-
-// ✅ FIX: Configure route for large file uploads
-export const runtime = 'nodejs'; // Use Node.js runtime
-export const maxDuration = 300; // 5 minutes timeout for long uploads
-export const dynamic = 'force-dynamic';
-
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
@@ -206,9 +200,9 @@ export async function POST(request: NextRequest) {
     
     const parseResult = parse(finalContent, {
       header: true,
-      delimiter: detectedDelimiter,
+      delimiter: detectedDelimiter, // ✅ FIX: Explicitly set delimiter
       skipEmptyLines: true,
-      newline: '\n',
+      newline: '\n', // ✅ FIX: Explicitly set newline
       quoteChar: '"',
       escapeChar: '"',
       transformHeader: (header: string, index: number) => {
@@ -231,7 +225,7 @@ export async function POST(request: NextRequest) {
     console.log(`  - Parse errors: ${errors.length}`);
 
     if (errors.length > 0) {
-      console.error("\n✗ CSV Parse Errors:");
+      console.error("\n❌ CSV Parse Errors:");
       console.error(`Total errors: ${errors.length}`);
       
       // Show detailed error info
@@ -579,7 +573,7 @@ async function processUploadData(
 
           const calculatedFields = [
             'Cost Center By Function', 'Coa', 'Department', 'Tax Location Code',
-            'Tax Location Name', 'Bank Account', 'Level', 'Total Basic Salary', 'Total Uang Makan',
+            'Tax Location Name', 'Bank Account', 'Total Basic Salary', 'Total Uang Makan',
             'Total Uang Transport', 'Total Tunjangan Jabatan', 'Total Insentif Inhouse',
             'Total Sisa Cuti', 'Total Uang Pisah', 'Total Tunjangan Operasional',
             'Total Komisi Karyawan', 'Total Insentif Mitra', 'Total Bonus Inhouse',
@@ -697,7 +691,7 @@ async function processUploadData(
     console.log("✅ UPLOAD PROCESSING COMPLETED\n");
 
   } catch (error) {
-    console.error("\n✗ PROCESSING FAILED");
+    console.error("\n❌ PROCESSING FAILED");
     console.error("Error:", error);
     
     await prisma.upload.update({
