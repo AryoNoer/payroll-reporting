@@ -7,8 +7,8 @@ import { Providers } from "./providers";
 const inter = Inter({ subsets: ["latin"] });
 
 export const metadata: Metadata = {
-  title: "Payroll Reporting System",
-  description: "System pelaporan payroll PT Sicepat Ekspres Indonesia",
+  title: "Dinda Reporting System",
+  description: "Dinda Management System for Reporting",
 };
 
 export default function RootLayout({
