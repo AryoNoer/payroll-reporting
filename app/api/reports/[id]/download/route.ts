@@ -143,7 +143,7 @@ export async function GET(
 
     // Return file
     const sanitizedName = report.name.replace(/[^a-zA-Z0-9-_\s]/g, '_');
-    return new NextResponse(buffer, {
+    return new NextResponse(new Uint8Array(buffer), {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         "Content-Disposition": `attachment; filename="${sanitizedName}.xlsx"`,
