@@ -21,7 +21,7 @@ export async function GET() {
     });
 
     return NextResponse.json(reports);
-  } catch (error) {
+  } catch {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
 }
@@ -30,7 +30,7 @@ export async function POST(request: NextRequest) {
   try {
     const user = await requireAuth();
     const body = await request.json();
-    const { uploadId, name, description, selectedFields } = body;
+    const { uploadId, name, description, selectedFields, reportType } = body;
 
     if (!uploadId || !name || !selectedFields || selectedFields.length === 0) {
       return NextResponse.json(
@@ -65,6 +65,7 @@ export async function POST(request: NextRequest) {
       data: {
         name,
         description: description || null,
+        reportType: reportType || "MONTHLY",
         uploadId,
         userId: user.id,
         selectedFields,

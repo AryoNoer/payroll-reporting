@@ -1,3 +1,5 @@
+/* eslint-disable react-hooks/exhaustive-deps */
+
 // app/(dashboard)/dashboard/reports/create/page.tsx
 "use client";
 
@@ -370,7 +372,7 @@ export default function CreateReportPage() {
         </button>
         <div>
           <h1 className="text-3xl font-bold text-gray-900">
-            Create New Report
+            Create Monthly Report
           </h1>
           <p className="text-gray-600 mt-2">Step {step} of 3</p>
         </div>

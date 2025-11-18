@@ -24,7 +24,6 @@ class UploadError extends Error {
 
 /**
  * Fields that should ALWAYS be treated as text/string
- * These will NOT be converted to numbers even if they start with digits
  */
 const TEXT_ONLY_FIELDS = new Set([
   'Jobstatus Code',
@@ -44,10 +43,6 @@ const TEXT_ONLY_FIELDS = new Set([
   'Company Account Name'
 ]);
 
-/**
- * Batch size for database inserts
- * Adjust based on your database performance
- */
 const BATCH_SIZE = 100;
 
 export async function GET() {
@@ -68,6 +63,7 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
+  console.log("📥 [DEBUG] Request method:", request.method);
   const startTime = Date.now();
   console.log("\n=== UPLOAD REQUEST STARTED ===");
   
@@ -98,19 +94,15 @@ export async function POST(request: NextRequest) {
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
     
-    // ✅ FIX: Detect and handle different encodings
     let content: string;
     try {
-      // Try UTF-8 first
       content = buffer.toString("utf-8");
       
-      // Check for BOM (Byte Order Mark)
       if (content.charCodeAt(0) === 0xFEFF) {
         content = content.substring(1);
         console.log('  ⚠ Removed UTF-8 BOM');
       }
       
-      // Normalize line endings to \n
       content = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
       
     } catch (error) {
@@ -120,16 +112,8 @@ export async function POST(request: NextRequest) {
     }
     
     console.log(`✓ File read: ${content.length} characters`);
-    
-    // ✅ Diagnostic: Check first few lines
-    const previewLines = content.split('\n').slice(0, 3);
-    console.log(`  Preview (first 3 lines):`);
-    previewLines.forEach((line, idx) => {
-      const preview = line.substring(0, 100) + (line.length > 100 ? '...' : '');
-      console.log(`    Line ${idx + 1}: ${preview}`);
-    });
 
-    // Step 3.5: Handle double header rows (category + field name)
+    // Step 3.5: Handle double header rows
     console.log("[Step 3.5] Detecting header structure...");
     const lines = content.split('\n');
     let finalContent = content;
@@ -138,7 +122,6 @@ export async function POST(request: NextRequest) {
       const firstLine = lines[0] || '';
       const secondLine = lines[1] || '';
       
-      // Check if first line is category row
       const firstLineUpper = firstLine.toUpperCase();
       const hasCategories = 
         firstLineUpper.includes('SALARY') || 
@@ -147,30 +130,23 @@ export async function POST(request: NextRequest) {
         firstLineUpper.includes('NEUTRAL') ||
         firstLineUpper.includes('TOTAL');
       
-      // Check if second line has actual column names
       const secondLineHasNames = 
         secondLine.includes('Name') || 
         secondLine.includes('Employee');
       
       if (hasCategories && secondLineHasNames) {
-        console.log('✓ Detected double header format (category + field name)');
+        console.log('✓ Detected double header format');
         
-        // Parse both lines to get arrays
         const categoryParse = parse(firstLine, { header: false });
         const fieldParse = parse(secondLine, { header: false });
         
         const categories = (categoryParse.data[0] || []) as string[];
         const fields = (fieldParse.data[0] || []) as string[];
         
-        console.log(`  Categories count: ${categories.length}`);
-        console.log(`  Fields count: ${fields.length}`);
-        
-        // Merge headers: use field name primarily
         const mergedHeaders: string[] = [];
         for (let i = 0; i < Math.max(categories.length, fields.length); i++) {
           const field = (fields[i] || '').trim();
           
-          // If field is empty or just a number, use category
           if (!field || /^\d+$/.test(field)) {
             mergedHeaders.push((categories[i] || '').trim() || `Column_${i}`);
           } else {
@@ -178,37 +154,29 @@ export async function POST(request: NextRequest) {
           }
         }
         
-        console.log(`  Merged headers sample: ${mergedHeaders.slice(0, 10).join(', ')}...`);
-        
-        // Rebuild CSV with merged header
-        const dataLines = lines.slice(2); // Skip both header lines
+        const dataLines = lines.slice(2);
         finalContent = mergedHeaders.join(',') + '\n' + dataLines.join('\n');
         
-        console.log('✓ Headers merged, ready to parse');
-      } else {
-        console.log('✓ Standard single header format detected');
+        console.log('✓ Headers merged');
       }
     }
 
     // Step 4: Parse CSV
     console.log("[Step 4] Parsing CSV...");
     
-    // Auto-detect delimiter from first line
     const firstDataLine = finalContent.split('\n')[0] || '';
     const detectedDelimiter = firstDataLine.includes('\t') ? '\t' : ',';
-    console.log(`  Detected delimiter: ${detectedDelimiter === '\t' ? 'TAB' : 'COMMA'}`);
     
     const parseResult = parse(finalContent, {
       header: true,
-      delimiter: detectedDelimiter, // ✅ FIX: Explicitly set delimiter
+      delimiter: detectedDelimiter,
       skipEmptyLines: true,
-      newline: '\n', // ✅ FIX: Explicitly set newline
+      newline: '\n',
       quoteChar: '"',
       escapeChar: '"',
       transformHeader: (header: string, index: number) => {
         const cleanHeader = header.trim();
         if (!cleanHeader) {
-          console.warn(`⚠ Empty header at column ${index}, renamed to Column_${index}`);
           return `Column_${index}`;
         }
         return cleanHeader;
@@ -218,53 +186,23 @@ export async function POST(request: NextRequest) {
 
     const { data, errors, meta } = parseResult;
 
-    // Log parsing details
     console.log(`✓ CSV parsed successfully`);
     console.log(`  - Rows: ${(data as any[]).length}`);
     console.log(`  - Columns: ${meta.fields?.length || 0}`);
-    console.log(`  - Parse errors: ${errors.length}`);
 
     if (errors.length > 0) {
       console.error("\n❌ CSV Parse Errors:");
       console.error(`Total errors: ${errors.length}`);
       
-      // Show detailed error info
-      errors.slice(0, 10).forEach((err, idx) => {
-        console.error(`\n  Error ${idx + 1}:`, {
-          type: err.type,
-          code: err.code,
-          message: err.message,
-          row: err.row,
-        });
-      });
-      
-      // ✅ Show problematic lines for diagnosis
-      if (errors.length > 0 && errors[0].row !== undefined) {
-        const lines = finalContent.split('\n');
-        const problemRow = errors[0].row;
-        if (problemRow < lines.length) {
-          console.error(`\n  Problematic line ${problemRow}:`);
-          console.error(`    ${lines[problemRow].substring(0, 200)}...`);
-        }
-      }
-      
-      // ✅ Better error message based on error type
       let errorMessage = "CSV parsing failed";
       if (errors[0].code === "TooManyFields") {
-        errorMessage = `CSV format error: File appears to have inconsistent number of columns. Expected ${meta.fields?.length || 1} columns but found more. Please check if the CSV file is properly formatted.`;
-      } else if (errors[0].code === "TooFewFields") {
-        errorMessage = `CSV format error: Some rows have fewer columns than expected. Please ensure all rows have the same number of columns.`;
+        errorMessage = `CSV format error: File has inconsistent columns.`;
       }
       
       throw new UploadError(
         errorMessage,
         "PARSE_ERROR",
-        {
-          totalErrors: errors.length,
-          firstErrors: errors.slice(0, 5),
-          expectedColumns: meta.fields?.length,
-          delimiter: detectedDelimiter === '\t' ? 'TAB' : 'COMMA'
-        }
+        { totalErrors: errors.length }
       );
     }
 
@@ -278,9 +216,6 @@ export async function POST(request: NextRequest) {
     const firstRow = (data as any[])[0];
     const headers = Object.keys(firstRow);
     
-    console.log(`✓ Found ${headers.length} columns`);
-    console.log(`  Sample headers: ${headers.slice(0, 10).join(", ")}...`);
-
     const missingColumns = requiredColumns.filter(
       col => !headers.some(h => h.includes(col))
     );
@@ -289,22 +224,81 @@ export async function POST(request: NextRequest) {
       throw new UploadError(
         `Missing required columns: ${missingColumns.join(", ")}`,
         "MISSING_COLUMNS",
-        { 
-          required: requiredColumns,
-          found: headers.slice(0, 20),
-          missing: missingColumns
-        }
+        { missing: missingColumns }
       );
     }
 
-    console.log(`✓ All required columns present`);
+    // ✅ NEW: Step 5.5 - Check for duplicates WITHIN the file
+    console.log("[Step 5.5] Checking for duplicate Employee No in file...");
+    const employeeNosInFile = new Set<string>();
+    const duplicatesInFile: string[] = [];
+    
+    (data as any[]).forEach((row, index) => {
+      const empNo = String(row["Employee No"] || "").trim();
+      if (empNo && employeeNosInFile.has(empNo)) {
+        duplicatesInFile.push(`${empNo} (Row ${index + 2})`);
+      }
+      if (empNo) {
+        employeeNosInFile.add(empNo);
+      }
+    });
+
+    if (duplicatesInFile.length > 0) {
+      console.error(`❌ Found ${duplicatesInFile.length} duplicate Employee No in file`);
+      throw new UploadError(
+        `File contains duplicate Employee No. Please remove duplicates and try again.`,
+        "DUPLICATE_IN_FILE",
+        {
+          duplicateCount: duplicatesInFile.length,
+          duplicates: duplicatesInFile.slice(0, 10),
+          message: duplicatesInFile.length > 10 
+            ? `Showing first 10 of ${duplicatesInFile.length} duplicates`
+            : undefined
+        }
+      );
+    }
+    console.log(`✓ No duplicates within file`);
+
+    // ✅ NEW: Step 5.6 - Check for duplicates with SAME PERIOD
+    console.log("[Step 5.6] Checking for duplicates with same period...");
+    const uploadPeriod = new Date(period + "-01");
+    
+    const existingEmployees = await prisma.employee.findMany({
+      where: {
+        employeeNo: { in: Array.from(employeeNosInFile) },
+        upload: {
+          period: uploadPeriod,
+          userId: user.id
+        }
+      },
+      select: {
+        employeeNo: true,
+        name: true,
+        upload: {
+          select: {
+            originalName: true,
+            uploadedAt: true
+          }
+        }
+      }
+    });
+
+    if (existingEmployees.length > 0) {
+      console.warn(`⚠ Found ${existingEmployees.length} employees already exist for period ${period}`);
+      const duplicateList = existingEmployees.slice(0, 10).map(e => 
+        `${e.employeeNo} - ${e.name} (from ${e.upload.originalName})`
+      );
+      
+      console.log(`  Will skip these ${existingEmployees.length} duplicate employees during insert`);
+    } else {
+      console.log(`✓ No duplicates with same period found`);
+    }
 
     // Step 6: Save file
     console.log("[Step 6] Saving file to disk...");
     const uploadDir = join(process.cwd(), "uploads");
     if (!existsSync(uploadDir)) {
       await mkdir(uploadDir, { recursive: true });
-      console.log(`✓ Created uploads directory`);
     }
 
     const fileName = `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
@@ -313,14 +307,14 @@ export async function POST(request: NextRequest) {
     console.log(`✓ File saved: ${fileName}`);
 
     // Step 7: Create database record
-    console.log("[Step 7] Creating upload record in database...");
+    console.log("[Step 7] Creating upload record...");
     const upload = await prisma.upload.create({
       data: {
         fileName,
         originalName: file.name,
         fileSize: file.size,
         rowCount: (data as any[]).length,
-        period: new Date(period + "-01"),
+        period: uploadPeriod,
         status: "PROCESSING",
         userId: user.id,
       },
@@ -328,29 +322,30 @@ export async function POST(request: NextRequest) {
     console.log(`✓ Upload record created: ${upload.id}`);
 
     // Step 8: Start background processing
-    console.log("[Step 8] Starting background processing (BATCH MODE)...");
+    console.log("[Step 8] Starting background processing...");
     processUploadData(upload.id, data as any[], headers).catch((error) => {
-      console.error("✗ Background processing error:", error);
+      console.error("❌ Background processing error:", error);
     });
 
     const duration = Date.now() - startTime;
     console.log(`✓ Upload completed in ${duration}ms`);
     console.log("=== UPLOAD REQUEST COMPLETED ===\n");
 
-    return NextResponse.json(upload);
+    // ✅ NEW: Return warning if duplicates exist
+    return NextResponse.json({
+      ...upload,
+      warning: existingEmployees.length > 0 ? {
+        duplicateCount: existingEmployees.length,
+        message: `${existingEmployees.length} employees already exist for this period and will be skipped`
+      } : undefined
+    });
 
   } catch (error) {
     const duration = Date.now() - startTime;
-    console.error("\n✗ UPLOAD FAILED");
+    console.error("\n❌ UPLOAD FAILED");
     console.error(`Duration: ${duration}ms`);
     
     if (error instanceof UploadError) {
-      console.error(`Error Code: ${error.code}`);
-      console.error(`Message: ${error.message}`);
-      if (error.details) {
-        console.error(`Details:`, JSON.stringify(error.details, null, 2));
-      }
-      
       return NextResponse.json(
         { 
           error: error.message,
@@ -365,52 +360,36 @@ export async function POST(request: NextRequest) {
     return NextResponse.json(
       { 
         error: "Failed to upload file", 
-        message: error instanceof Error ? error.message : "Unknown error",
-        stack: process.env.NODE_ENV === 'development' && error instanceof Error 
-          ? error.stack 
-          : undefined
+        message: error instanceof Error ? error.message : "Unknown error"
       },
       { status: 500 }
     );
   }
 }
 
-/**
- * Smart value parser that preserves text fields
- */
 function parseValue(key: string, value: any): any {
-  // Empty values
   if (value === null || value === undefined || value === '') {
     return value;
   }
 
-  // Already not a string
   if (typeof value !== 'string') {
     return value;
   }
 
-  // ✅ FIX: Always preserve text-only fields as strings
   if (TEXT_ONLY_FIELDS.has(key)) {
     return value.trim();
   }
 
-  // Try to parse as number for other fields
   const cleanValue = value.replace(/['"',]/g, '').trim();
   
-  // Check if it looks like a pure number
   if (/^-?\d+\.?\d*$/.test(cleanValue)) {
     const numValue = parseFloat(cleanValue);
     return isNaN(numValue) ? cleanValue : numValue;
   }
 
-  // Return as string
   return cleanValue;
 }
 
-/**
- * Process uploaded data with BATCH INSERT for 8-10x faster performance
- * Processes in batches for optimal database performance
- */
 async function processUploadData(
   uploadId: string,
   rows: any[],
@@ -418,11 +397,7 @@ async function processUploadData(
 ) {
   const startTime = Date.now();
   console.log(`\n${'='.repeat(70)}`);
-  console.log(`🚀 PROCESSING UPLOAD ${uploadId} (BATCH MODE WITH PROGRESS)`);
-  console.log(`${'='.repeat(70)}`);
-  console.log(`📊 Total rows: ${rows.length}`);
-  console.log(`📋 Total columns: ${headers.length}`);
-  console.log(`⚡ Batch size: ${BATCH_SIZE} rows/batch`);
+  console.log(`🚀 PROCESSING UPLOAD ${uploadId}`);
   console.log(`${'='.repeat(70)}\n`);
 
   const errorLog: Array<{
@@ -432,13 +407,11 @@ async function processUploadData(
   }> = [];
 
   try {
-    // Initialize progress to 0%
     await prisma.upload.update({
       where: { id: uploadId },
       data: { progress: 0 },
     });
 
-    // Get component mapping
     console.log("[Step 1] Loading component mappings...");
     const components = await prisma.component.findMany({
       where: { isActive: true },
@@ -465,10 +438,10 @@ async function processUploadData(
       }
     };
 
-    // Process rows in batches
     console.log("[Step 2] Processing rows in batches...\n");
     let processedCount = 0;
     let skippedCount = 0;
+    let duplicateCount = 0;
     const totalBatches = Math.ceil(rows.length / BATCH_SIZE);
 
     for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
@@ -623,58 +596,48 @@ async function processUploadData(
         }
       }
 
-      // Batch insert
+      // ✅ Batch insert with skipDuplicates
       if (batchData.length > 0) {
-        await prisma.employee.createMany({
+        const result = await prisma.employee.createMany({
           data: batchData,
-          skipDuplicates: true,
+          skipDuplicates: true, // Skip if uploadId+employeeNo already exists
         });
 
-        processedCount += batchData.length;
+        const actualInserted = result.count;
+        const skippedInBatch = batchData.length - actualInserted;
+        
+        processedCount += actualInserted;
+        duplicateCount += skippedInBatch;
         
         const batchDuration = Date.now() - batchStartTime;
-        const rowsPerSecond = (batchData.length / (batchDuration / 1000)).toFixed(0);
-        console.log(`  ✓ Inserted ${batchData.length} rows in ${batchDuration}ms (${rowsPerSecond} rows/sec)`);
+        console.log(`  ✓ Inserted ${actualInserted} rows, skipped ${skippedInBatch} duplicates in ${batchDuration}ms`);
       }
 
-      // 🎯 UPDATE PROGRESS IN DATABASE
       const currentProgress = Math.round((batchEnd / rows.length) * 100);
       await prisma.upload.update({
         where: { id: uploadId },
         data: { progress: currentProgress },
       });
 
-      const elapsedSeconds = (Date.now() - startTime) / 1000;
-      const elapsed = elapsedSeconds.toFixed(1);
-      const estimatedTotal = (elapsedSeconds / (batchEnd / rows.length)).toFixed(1);
-      const remaining = (Number(estimatedTotal) - elapsedSeconds).toFixed(1);
-      console.log(`  📊 Progress: ${currentProgress}% | Elapsed: ${elapsed}s | ETA: ~${remaining}s remaining\n`);
+      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+      console.log(`  📊 Progress: ${currentProgress}% | Elapsed: ${elapsed}s\n`);
     }
 
     const duration = Date.now() - startTime;
-    const rowsPerSecond = (processedCount / (duration / 1000)).toFixed(0);
     
     console.log(`${'='.repeat(70)}`);
     console.log("✅ PROCESSING SUMMARY");
     console.log(`${'='.repeat(70)}`);
-    console.log(`✓ Successfully processed: ${processedCount} rows`);
+    console.log(`✓ Successfully inserted: ${processedCount} rows`);
     console.log(`⊘ Skipped (empty): ${skippedCount} rows`);
+    console.log(`⊘ Skipped (duplicate): ${duplicateCount} rows`);
     console.log(`✗ Failed: ${errorLog.length} rows`);
     console.log(`⏱ Total Duration: ${(duration / 1000).toFixed(2)}s`);
-    console.log(`⚡ Average Speed: ${rowsPerSecond} rows/second`);
     console.log(`${'='.repeat(70)}\n`);
 
-    if (errorLog.length > 0) {
-      console.log("⚠️ ERROR DETAILS:");
-      errorLog.slice(0, 10).forEach(err => {
-        console.log(`  Row ${err.row}: ${err.error}`);
-      });
-      if (errorLog.length > 10) {
-        console.log(`  ... and ${errorLog.length - 10} more errors\n`);
-      }
-    }
-
-    const statusMessage = errorLog.length > 0 
+    const statusMessage = duplicateCount > 0 
+      ? `Completed: ${processedCount} inserted, ${duplicateCount} duplicates skipped`
+      : errorLog.length > 0 
       ? `Completed with ${errorLog.length} errors`
       : undefined;
 

@@ -13,6 +13,7 @@ import {
   XCircle,
   AlertCircle,
   X,
+  AlertTriangle,
 } from "lucide-react";
 import { format } from "date-fns";
 
@@ -73,7 +74,6 @@ export default function UploadsPage() {
     fetchUploads();
   }, []);
 
-  // 🎯 POLLING MECHANISM - Auto-refresh processing uploads
   useEffect(() => {
     const processingUploads = uploads.filter((u) => u.status === "PROCESSING");
 
@@ -133,7 +133,6 @@ export default function UploadsPage() {
         prevUploads.map((upload) => {
           const updated = responses.find((r) => r.id === upload.id);
           if (updated) {
-            // Show toast when processing completes
             if (
               upload.status === "PROCESSING" &&
               updated.status === "COMPLETED"
@@ -184,13 +183,6 @@ export default function UploadsPage() {
       } else {
         console.error("Invalid response format:", data);
         setUploads([]);
-
-        if (data.error) {
-          setError({
-            message: "Failed to load uploads: " + data.error,
-            code: "FETCH_ERROR",
-          });
-        }
       }
     } catch (err) {
       console.error("Error fetching uploads:", err);
@@ -242,12 +234,23 @@ export default function UploadsPage() {
       const data = await response.json();
 
       if (!response.ok) {
-        showModal(
-          "error",
-          "Upload Failed",
-          data.error || "Failed to upload file",
-          data.details
-        );
+        // ✅ NEW: Show detailed error for duplicates
+        if (data.code === "DUPLICATE_IN_FILE") {
+          showModal(
+            "error",
+            "Duplicate Employees Found",
+            data.error,
+            data.details
+          );
+        } else {
+          showModal(
+            "error",
+            "Upload Failed",
+            data.error || "Failed to upload file",
+            data.details
+          );
+        }
+        
         setError({
           message: data.error || "Upload failed",
           code: data.code,
@@ -256,18 +259,34 @@ export default function UploadsPage() {
         return;
       }
 
-      showModal(
-        "success",
-        "File Uploaded Successfully!",
-        `Your file "${file.name}" has been uploaded and processing will start automatically.`,
-        undefined,
-        () => {
-          setFile(null);
-          setPeriod("");
-          if (fileInputRef.current) fileInputRef.current.value = "";
-          setTimeout(fetchUploads, 1000);
-        }
-      );
+      // ✅ NEW: Show warning if duplicates with same period
+      if (data.warning) {
+        showModal(
+          "warning",
+          "File Uploaded with Warnings",
+          `Your file "${file.name}" has been uploaded successfully.\n\n${data.warning.message}`,
+          undefined,
+          () => {
+            setFile(null);
+            setPeriod("");
+            if (fileInputRef.current) fileInputRef.current.value = "";
+            setTimeout(fetchUploads, 1000);
+          }
+        );
+      } else {
+        showModal(
+          "success",
+          "File Uploaded Successfully!",
+          `Your file "${file.name}" has been uploaded and processing will start automatically.`,
+          undefined,
+          () => {
+            setFile(null);
+            setPeriod("");
+            if (fileInputRef.current) fileInputRef.current.value = "";
+            setTimeout(fetchUploads, 1000);
+          }
+        );
+      }
     } catch (err) {
       showModal(
         "error",
@@ -355,7 +374,7 @@ export default function UploadsPage() {
                 )}
                 {modal.type === "warning" && (
                   <div className="w-10 h-10 bg-yellow-100 rounded-full flex items-center justify-center">
-                    <AlertCircle className="w-6 h-6 text-yellow-600" />
+                    <AlertTriangle className="w-6 h-6 text-yellow-600" />
                   </div>
                 )}
                 {modal.type === "info" && (
@@ -387,16 +406,30 @@ export default function UploadsPage() {
 
             {/* Modal Body */}
             <div className="px-6 py-4">
-              <p className="text-gray-700">{modal.message}</p>
+              <p className="text-gray-700 whitespace-pre-line">{modal.message}</p>
 
               {modal.details && (
                 <details className="mt-3">
                   <summary className="text-sm text-gray-600 cursor-pointer hover:text-gray-800 font-medium">
                     View technical details
                   </summary>
-                  <pre className="mt-2 text-xs bg-gray-100 p-3 rounded overflow-x-auto max-h-48">
-                    {JSON.stringify(modal.details, null, 2)}
-                  </pre>
+                  <div className="mt-2 text-xs bg-gray-100 p-3 rounded overflow-x-auto max-h-48">
+                    {/* ✅ Show duplicate list nicely */}
+                    {modal.details.duplicates && (
+                      <div className="space-y-1">
+                        <p className="font-semibold mb-2">Duplicate Employee Numbers:</p>
+                        {modal.details.duplicates.map((dup: string, idx: number) => (
+                          <div key={idx} className="text-red-700">• {dup}</div>
+                        ))}
+                        {modal.details.message && (
+                          <p className="mt-2 text-gray-600 italic">{modal.details.message}</p>
+                        )}
+                      </div>
+                    )}
+                    {!modal.details.duplicates && (
+                      <pre>{JSON.stringify(modal.details, null, 2)}</pre>
+                    )}
+                  </div>
                 </details>
               )}
             </div>
@@ -589,7 +622,7 @@ export default function UploadsPage() {
                         </span>
                       </div>
 
-                      {/* 🎯 PROGRESS BAR */}
+                      {/* Progress Bar */}
                       {upload.status === "PROCESSING" && (
                         <div className="mt-3">
                           <div className="flex items-center justify-between mb-1">
@@ -653,8 +686,9 @@ export default function UploadsPage() {
         <ul className="text-sm text-blue-800 space-y-1">
           <li>• Must be in CSV format (.csv)</li>
           <li>• Required columns: Name, Employee No</li>
+          <li>• No duplicate Employee No within the same file</li>
+          <li>• Duplicates with same period will be automatically skipped</li>
           <li>• Maximum file size: 20MB</li>
-          <li>• Progress updates automatically every 2 seconds</li>
         </ul>
       </div>
     </div>

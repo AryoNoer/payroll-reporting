@@ -7,7 +7,10 @@ import { requireAuth } from "@/lib/auth";
 import { generateTemplatedExcel, workbookToBuffer, getCategorySummary } from "@/lib/excel-template";
 import { categorizeFields } from "@/lib/field-categories";
 import { applyCalculationsAndDerivations } from "@/lib/field-calculations";
-import { OUTPUT_FIELDS } from "@/lib/output-fields"; // ✅ Import complete field list
+import { OUTPUT_FIELDS } from "@/lib/output-fields";
+import { HEADCOUNT_FIELDS } from "@/lib/headcount-fields";
+import { aggregateCostCenterData } from "@/lib/cost-center-aggregation";
+
 
 export async function GET(
   request: NextRequest,
@@ -18,7 +21,7 @@ export async function GET(
     const { id: reportId } = await params;
 
     console.log('\n' + '='.repeat(60));
-    console.log('📊 GENERATING COMPLETE REPORT (ALL 362+ COLUMNS)');
+console.log('📊 GENERATING REPORT');
     console.log('='.repeat(60));
     console.log(`Report ID: ${reportId}`);
 
@@ -49,17 +52,66 @@ export async function GET(
       orderBy: { employeeNo: 'asc' }
     });
 
-    console.log(`✓ Employees: ${employees.length} rows`);
+    // ✅ Filter by COA if Cabang Report
+    let filteredEmployees = employees;
+    if (report.reportType === "CABANG") {
+      filteredEmployees = employees.filter((emp) => {
+        // Calculate COA from neutralData or salaryData
+        const neutralData = (emp.neutralData as any) || {};
+        const salaryData = (emp.salaryData as any) || {};
+        const costCenter = String(neutralData['Cost Center'] || salaryData['Cost Center'] || '').toLowerCase();
+        
+        // COA = 500 means NOT "kantor pusat"
+        return !costCenter.includes('kantor pusat');
+      });
+      
+      console.log(`✓ Filtered for Cabang: ${filteredEmployees.length} employees (COA = 500)`);
+    }
 
-    // ✅ USE COMPLETE OUTPUT_FIELDS (All 362+ columns)
-    // This ensures ALL columns are present, even if data is empty
-    const allFieldNames = OUTPUT_FIELDS;
+// ... (line 1-67 tetap sama)
+    
+    console.log(`✓ Employees: ${filteredEmployees.length} rows`);
 
-    console.log(`✓ Total columns (COMPLETE): ${allFieldNames.length}`);
+    // ✅ Handle Cost Center Report (Aggregated)
+    if (report.reportType === "COST_CENTER") {
+      console.log('\n' + '='.repeat(60));
+      console.log('📊 GENERATING COST CENTER REPORT (AGGREGATED)');
+      console.log('='.repeat(60));
+      
+      const aggregatedData = aggregateCostCenterData(employees);
+      
+      // Generate Excel
+      const { generateCostCenterExcel, costCenterWorkbookToBuffer } = await import("@/lib/cost-center-excel");
+      const wb = generateCostCenterExcel(aggregatedData, report.name, report.upload.period);
+      const buffer = costCenterWorkbookToBuffer(wb);
+      
+      console.log(`✓ Excel generated: ${(buffer.byteLength / 1024).toFixed(2)} KB`);
+      console.log('='.repeat(60));
+      console.log('✅ COST CENTER REPORT COMPLETE');
+      console.log('='.repeat(60) + '\n');
+      
+      // Return file
+      const sanitizedName = report.name.replace(/[^a-zA-Z0-9-_\s]/g, '_');
+      return new NextResponse(new Uint8Array(buffer), {
+        headers: {
+          "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "Content-Disposition": `attachment; filename="${sanitizedName}_CostCenter.xlsx"`,
+        },
+      });
+    }
+
+    // ✅ Select fields based on report type (FOR NON-COST CENTER REPORTS)
+    const allFieldNames = report.reportType === "HEADCOUNT" 
+      ? [...HEADCOUNT_FIELDS]   // 25 fields for headcount
+      : OUTPUT_FIELDS;           // 301 fields for monthly report
+
+    console.log(`✅ Using ${report.reportType} fields: ${allFieldNames.length} fields total`);
 
     // Build data rows
     console.log('\n📋 Building data rows with ALL columns...');
-    const excelData = employees.map((emp, index) => {
+    // Build data rows
+    console.log('\n📋 Building data rows with ALL columns...');
+    const excelData = filteredEmployees.map((emp, index) => {
       // Start with raw data object
       const row: any = {
         'No': index + 1,

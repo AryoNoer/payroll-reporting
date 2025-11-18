@@ -18,7 +18,16 @@ import Image from "next/image";
 const navigation = [
   { name: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
   { name: "Upload Data", href: "/dashboard/uploads", icon: Upload },
-  { name: "Reports", href: "/dashboard/reports", icon: FileText },
+  {
+    name: "Reports",
+    icon: FileText,
+    children: [
+      { name: "Monthly Report", href: "/dashboard/reports" },
+      { name: "Headcount Report", href: "/dashboard/reports/headcount" },
+      { name: "Cabang Report", href: "/dashboard/reports/cabang" },
+      { name: "Cost Center Report", href: "/dashboard/reports/cost-center" },
+    ],
+  },
   { name: "Settings", href: "/dashboard/settings", icon: Settings },
 ];
 
@@ -77,6 +86,56 @@ export default function DashboardLayout({
         {/* Navigation */}
         <nav className="flex-1 px-4 py-6 space-y-1">
           {navigation.map((item) => {
+            // Item dengan children (Reports)
+            if ("children" in item && item.children) {
+              const hasActiveChild = item.children.some(
+                (child) =>
+                  pathname === child.href ||
+                  pathname.startsWith(child.href + "/")
+              );
+
+              return (
+                <div key={item.name}>
+                  {/* Parent item */}
+                  <div
+                    className={`
+            flex items-center space-x-3 px-4 py-3 rounded-lg
+            ${hasActiveChild ? "text-indigo-600" : "text-gray-700"}
+          `}
+                  >
+                    <item.icon className="w-5 h-5" />
+                    <span className="font-medium">{item.name}</span>
+                  </div>
+
+                  {/* Children items */}
+                  <div className="ml-9 mt-1 space-y-1">
+                    {item.children.map((child) => {
+                      const isActive =
+                        pathname === child.href ||
+                        pathname.startsWith(child.href + "/");
+                      return (
+                        <a
+                          key={child.name}
+                          href={child.href}
+                          className={`
+                    block px-4 py-2 text-sm rounded-lg transition-colors
+                    ${
+                      isActive
+                        ? "bg-indigo-50 text-indigo-600 font-medium"
+                        : "text-gray-600 hover:bg-gray-100"
+                    }
+                  `}
+                        >
+                          {child.name}
+                        </a>
+                      );
+                    })}
+                  </div>
+                </div>
+              );
+            }
+
+            // Regular item (no children)
             const isActive =
               pathname === item.href || pathname.startsWith(item.href + "/");
             return (
@@ -84,13 +143,13 @@ export default function DashboardLayout({
                 key={item.name}
                 href={item.href}
                 className={`
-                  flex items-center space-x-3 px-4 py-3 rounded-lg transition-colors
-                  ${
-                    isActive
-                      ? "bg-indigo-50 text-indigo-600"
-                      : "text-gray-700 hover:bg-gray-100"
-                  }
-                `}
+          flex items-center space-x-3 px-4 py-3 rounded-lg transition-colors
+          ${
+            isActive
+              ? "bg-indigo-50 text-indigo-600"
+              : "text-gray-700 hover:bg-gray-100"
+          }
+        `}
               >
                 <item.icon className="w-5 h-5" />
                 <span className="font-medium">{item.name}</span>
