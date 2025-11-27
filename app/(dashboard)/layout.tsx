@@ -26,6 +26,12 @@ const navigation = [
       { name: "Headcount Report", href: "/dashboard/reports/headcount" },
       { name: "Cabang Report", href: "/dashboard/reports/cabang" },
       { name: "Cost Center Report", href: "/dashboard/reports/cost-center" },
+      { name: "THR Cabang Report", href: "/dashboard/reports/thr-cabang" },
+      {
+        name: "Upload Components",
+        href: "/dashboard/uploads/components",
+        icon: Upload,
+      }, // ← TAMBAH INI
     ],
   },
   { name: "Settings", href: "/dashboard/settings", icon: Settings },
