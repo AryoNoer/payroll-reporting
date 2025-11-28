@@ -79,8 +79,8 @@ export default function UploadComponentsPage() {
         return;
       }
 
-      if (selectedFile.size > 50 * 1024 * 1024) {
-        showToast("error", "File size exceeds 50MB limit");
+      if (selectedFile.size > 100 * 1024 * 1024) {
+        showToast("error", "File size exceeds 100MB limit");
         return;
       }
 
@@ -420,7 +420,7 @@ export default function UploadComponentsPage() {
               </label>
             </div>
             <p className="text-xs text-gray-500 mt-1">
-              Maximum file size: 50MB. Format: CSV only.
+              Maximum file size: 100MB. Format: CSV only.
             </p>
           </div>
 
@@ -456,7 +456,7 @@ export default function UploadComponentsPage() {
             • Required columns: Employee No, Komponen, Nilai, Bulan Report
           </li>
           <li>• Optional columns: Remark, Remark2, Remark3</li>
-          <li>• Maximum file size: 50MB</li>
+          <li>• Maximum file size: 100MB</li>
           <li>• Select correct Type (HO/OS) before uploading</li>
         </ul>
       </div>
