@@ -158,7 +158,8 @@ export function calculateTotalBasicSalary(data: any): number {
     (Number(data['Additional Salary']) || 0) +
     (Number(data['Additional Salary Gross']) || 0) +
     (Number(data['Rapel Salary']) || 0) +
-    (Number(data['Rapel Salary Gross']) || 0)
+    (Number(data['Rapel Salary Gross']) || 0) +
+    (Number(data['Rapel Mitra Sudah Dibayar']) || 0)  // ✅ TAMBAHAN
   );
 }
 
@@ -181,12 +182,13 @@ export function calculateTotalUangMakan(data: any): number {
  */
 export function calculateTotalUangTransport(data: any): number {
   return (
+    (Number(data['Uang Makan & Transport']) || 0) +          // ✅ TAMBAHAN
+    (Number(data['Uang Makan Bulanan']) || 0) +              // ✅ TAMBAHAN
     (Number(data['Uang Transport']) || 0) +
     (Number(data['Additional Uang Transport']) || 0) +
     (Number(data['Rapel Uang Transport']) || 0) +
     (Number(data['Tunjangan Transport Commercial']) || 0) +
     (Number(data['Additional Tunjangan Transport Commercial']) || 0)
-    // Note: Add 2 more fields if identified from actual data
   );
 }
 
@@ -224,7 +226,8 @@ export function calculateTotalInsentifInhouse(data: any): number {
     (Number(data['Additional Refund Loan']) || 0) +
     (Number(data['Tunjangan Tempat Tinggal']) || 0) +
     (Number(data['Reward']) || 0) +
-    (Number(data['Additional Reward']) || 0)
+    (Number(data['Additional Reward']) || 0) +
+    (Number(data['Total Sisa Cuti']) || 0)  // ✅ TAMBAHAN (recursive calculation)
   );
 }
 
@@ -261,6 +264,7 @@ export function calculateTotalUangPisah(data: any): number {
  */
 export function calculateTotalTunjanganOperasional(data: any): number {
   return (
+    (Number(data['Netral Operasional dibayar Payroll']) || 0) +  // ✅ TAMBAHAN
     (Number(data['Tunjangan Operasional']) || 0) +
     (Number(data['Additional Tunjangan Operational']) || 0) +
     (Number(data['Rapel Tunjangan Operational']) || 0)
@@ -285,6 +289,7 @@ export function calculateTotalKomisiKaryawan(data: any): number {
  */
 export function calculateTotalInsentifMitra(data: any): number {
   const fields = [
+    'Insentif Per Paket',                           // ✅ TAMBAHAN (tanpa "Mitra")
     'Insentif Per Paket Mitra',
     'Insentif Perbantuan',
     'Additional Insentif Perbantuan',
@@ -301,6 +306,7 @@ export function calculateTotalInsentifMitra(data: any): number {
     'Insentif Kerajinan Mitra',
     'Insentif Mitra',
     'Additional Insentif Mitra',
+    'Additional Insentif Mitra 1 - 15',            // ✅ TAMBAHAN (typo di doc kamu)
     'Rapel Insentif Mitra',
     'Insentif Mitra Lain',
     'Additional Insentif Mitra Lain',
@@ -310,7 +316,7 @@ export function calculateTotalInsentifMitra(data: any): number {
     'Insentif Pembawaan Mitra 10 Kg',
     'Additional Insentif Per Paket Mitra',
     'Insentif Perbantuan Mitra',
-    'Insentif Produktifitas Mitra',
+    'Insentif Produktifitas Mitra',                // ✅ FIX typo (+ instead of space)
     'Rapel Insentif Produktifitas Mitra',
     'Target Paket Mitra',
     'Additional Target Paket Mitra',
@@ -331,6 +337,14 @@ export function calculateTotalInsentifMitra(data: any): number {
  */
 export function calculateTotalBonusInhouse(data: any): number {
   const fields = [
+    'Additional Loyalty Fee Mitra',          // ✅ TAMBAHAN
+    'Loyalty Fee Mitra',                     // ✅ TAMBAHAN
+    'Additional Reward Mitra',               // ✅ TAMBAHAN
+    'Additional Reward Mitra Semester',      // ✅ TAMBAHAN
+    'Reward Be A Star',                      // ✅ TAMBAHAN
+    'Reward Bulanan Mitra',                  // ✅ TAMBAHAN
+    'Reward Semester Mitra',                 // ✅ TAMBAHAN
+    'Rewards',                               // ✅ TAMBAHAN
     'Bonus',
     'Additional Bonus Carrot And Stick',
     'Additional Bonus CPP',
@@ -436,7 +450,8 @@ export function calculateTotalTHR(data: any): number {
   return (
     (Number(data['THR']) || 0) +
     (Number(data['Additional THR']) || 0) +
-    (Number(data['Rapel THR']) || 0)
+    (Number(data['Rapel THR']) || 0) +
+    (Number(data['THR Gross']) || 0)  // ✅ TAMBAHAN
   );
 }
 
@@ -509,7 +524,9 @@ export function calculateTotalDeduction(data: any): number {
     'BPJS Pensiun',
     'BPJS Pensiun Gross',
     'BPJS Kesehatan',
-    'BPJS Kesehatan Gross'
+    'BPJS Kesehatan Gross',
+    'Tax',                           // ✅ TAMBAHAN
+    'Tax Penalty Borne'              // ✅ TAMBAHAN
   ];
 
   let total = 0;
@@ -518,6 +535,13 @@ export function calculateTotalDeduction(data: any): number {
   });
 
   return total;
+}
+
+/**
+ * BHR Mitra = Pengembalian Potongan Volta TEI (direct copy)
+ */
+export function calculateBHRMitra(data: any): number {
+  return Number(data['Pengembalian Potongan Volta TEI']) || 0;
 }
 
 /**
@@ -558,6 +582,10 @@ export function applyCalculationsAndDerivations(data: any): any {
   data['Total BPJS TK'] = calculateTotalBPJSTK(data);
   data['Total BPJS Kes'] = calculateTotalBPJSKes(data);
   data['Total Deduction'] = calculateTotalDeduction(data);
+  data['BHR Mitra'] = calculateBHRMitra(data);  // ✅ TAMBAHAN
+
+
 
   return data;
 }
+

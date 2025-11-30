@@ -7,28 +7,40 @@ import { requireAuth } from "@/lib/auth";
 import { parse } from "papaparse";
 import * as XLSX from "xlsx";
 
+// ✅ Configuration for chunked processing
+const CHUNK_SIZE = 5000; // Process 5000 rows at a time
+const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB limit
+
 export async function POST(request: NextRequest) {
   try {
     const user = await requireAuth();
 
     const formData = await request.formData();
     const file = formData.get("file") as File;
-    const type = formData.get("type") as string; // ✅ NEW: Get type from form
+    const type = formData.get("type") as string;
 
     if (!file) {
       return NextResponse.json({ error: "File is required" }, { status: 400 });
     }
 
-
-    // ✅ NEW: Validate type
     if (!type || (type !== "HO" && type !== "OS")) {
       return NextResponse.json({ 
         error: "Type is required and must be either 'HO' or 'OS'" 
       }, { status: 400 });
     }
 
-    console.log(`[Upload Components] File: ${file.name}, Type: ${type}`);
+    // ✅ Check file size
+    if (file.size > MAX_FILE_SIZE) {
+      return NextResponse.json({ 
+        error: `File too large. Maximum size is ${MAX_FILE_SIZE / (1024*1024)}MB` 
+      }, { status: 400 });
+    }
 
+    console.log(`[Upload Components] File: ${file.name}, Size: ${(file.size / (1024*1024)).toFixed(2)}MB, Type: ${type}`);
+
+    const startTime = Date.now();
+
+    // ✅ Read file buffer
     const bytes = await file.arrayBuffer();
     const buffer = Buffer.from(bytes);
 
@@ -50,23 +62,25 @@ export async function POST(request: NextRequest) {
       rows = XLSX.utils.sheet_to_json(sheet);
     } else {
       return NextResponse.json(
-        { error: "Unsupported file format" },
+        { error: "Unsupported file format. Please use CSV or Excel." },
         { status: 400 }
       );
     }
 
-    console.log(`[Upload Components] Parsed ${rows.length} rows`);
+    const parseTime = ((Date.now() - startTime) / 1000).toFixed(2);
+    console.log(`[Upload Components] Parsed ${rows.length} rows in ${parseTime}s`);
 
-    // Validate required columns
-    const requiredColumns = ["Employee No", "Komponen", "Nilai"];
-    const firstRow = rows[0];
-    if (!firstRow) {
+    // Validate file not empty
+    if (rows.length === 0) {
       return NextResponse.json(
         { error: "File is empty" },
         { status: 400 }
       );
     }
 
+    // Validate required columns
+    const requiredColumns = ["Employee No", "Komponen", "Nilai", "Bulan Report"];
+    const firstRow = rows[0];
     const headers = Object.keys(firstRow);
     const missingColumns = requiredColumns.filter(
       col => !headers.some(h => h.includes(col))
@@ -76,62 +90,146 @@ export async function POST(request: NextRequest) {
       return NextResponse.json(
         { 
           error: `Missing required columns: ${missingColumns.join(", ")}`,
-          details: { missing: missingColumns }
+          details: { missing: missingColumns, found: headers }
         },
         { status: 400 }
       );
     }
 
-    // Transform rows to database format
+    // ✅ Transform rows to database format (in memory - quick)
     const componentsData = rows.map((row) => ({
-    employeeNo: String(row["Employee No"] || "").trim(),
-    komponen: String(row["Komponen"] || "").trim(),
-    nilai: String(row["Nilai"] || "").trim(),
-    remark: row["Remark"] ? String(row["Remark"]).trim() : null,
-    remark2: row["Remark2"] ? String(row["Remark2"]).trim() : null,
-    remark3: row["Remark3"] ? String(row["Remark3"]).trim() : null,
-    bulanReport: String(row["Bulan Report"] || "").trim(), // ✅ CHANGED: Always from CSV, no fallback
-    type: type,
-    uploadedBy: user.id,
-  }));
+      employeeNo: String(row["Employee No"] || "").trim(),
+      komponen: String(row["Komponen"] || "").trim(),
+      nilai: String(row["Nilai"] || "").trim(),
+      remark: row["Remark"] ? String(row["Remark"]).trim() : null,
+      remark2: row["Remark2"] ? String(row["Remark2"]).trim() : null,
+      remark3: row["Remark3"] ? String(row["Remark3"]).trim() : null,
+      bulanReport: String(row["Bulan Report"] || "").trim(),
+      type: type,
+      uploadedBy: user.id,
+    }));
 
-    console.log(`[Upload Components] Inserting ${componentsData.length} records with type: ${type}`);
+    // ✅ Validate Bulan Report exists in all rows
+    const invalidRows = componentsData.filter(row => !row.bulanReport);
+    if (invalidRows.length > 0) {
+      return NextResponse.json({
+        error: `Missing "Bulan Report" in ${invalidRows.length} rows. Please ensure all rows have this field.`,
+        details: { 
+          missingCount: invalidRows.length,
+          sampleInvalid: invalidRows.slice(0, 3).map(r => r.employeeNo)
+        }
+      }, { status: 400 });
+    }
 
-    // ✅ ADD: Validate Bulan Report exists in data
-const invalidRows = componentsData.filter(row => !row.bulanReport);
-if (invalidRows.length > 0) {
-  return NextResponse.json({
-    error: `Missing "Bulan Report" in ${invalidRows.length} rows. Please ensure all rows have this field.`,
-    details: { missingCount: invalidRows.length }
-  }, { status: 400 });
-}
+    const transformTime = ((Date.now() - startTime) / 1000).toFixed(2);
+    console.log(`[Upload Components] Transformed data in ${transformTime}s`);
 
-console.log(`[Upload Components] Inserting ${componentsData.length} records with type: ${type}`);
+    // ✅ CHUNKED INSERT - Process in batches to avoid memory overflow
+    console.log(`[Upload Components] Starting chunked insert (${CHUNK_SIZE} rows/batch)`);
+    
+    let totalInserted = 0;
+    const totalChunks = Math.ceil(componentsData.length / CHUNK_SIZE);
 
+    for (let i = 0; i < componentsData.length; i += CHUNK_SIZE) {
+      const chunk = componentsData.slice(i, i + CHUNK_SIZE);
+      const chunkNumber = Math.floor(i / CHUNK_SIZE) + 1;
+      
+      const chunkStart = Date.now();
+      
+      // Insert chunk
+      const result = await prisma.employeeComponent.createMany({
+        data: chunk,
+        skipDuplicates: true,
+      });
 
+      totalInserted += result.count;
+      
+      const chunkTime = ((Date.now() - chunkStart) / 1000).toFixed(2);
+      
+      console.log(
+        `[Upload Components] Chunk ${chunkNumber}/${totalChunks}: ` +
+        `Inserted ${result.count}/${chunk.length} rows in ${chunkTime}s ` +
+        `(Total: ${totalInserted}/${componentsData.length})`
+      );
 
-    // Batch insert
-    const result = await prisma.employeeComponent.createMany({
-      data: componentsData,
-      skipDuplicates: true,
-    });
+      // ✅ Small delay to prevent database overload
+      if (chunkNumber < totalChunks) {
+        await new Promise(resolve => setTimeout(resolve, 10));
+      }
+    }
 
-    console.log(`[Upload Components] Successfully inserted ${result.count} records`);
+    const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
+    const rowsPerSecond = Math.round(totalInserted / parseFloat(totalTime));
+
+    console.log(
+      `[Upload Components] ✅ COMPLETED - ` +
+      `Inserted ${totalInserted}/${componentsData.length} records ` +
+      `in ${totalTime}s (${rowsPerSecond} rows/sec)`
+    );
 
     return NextResponse.json({
       success: true,
-      count: result.count,
-      type: type, // Return type in response
-      message: `Successfully uploaded ${result.count} component records (Type: ${type})`,
+      count: totalInserted,
+      total: componentsData.length,
+      skipped: componentsData.length - totalInserted,
+      type: type,
+      performance: {
+        totalTime: `${totalTime}s`,
+        rowsPerSecond,
+        chunks: totalChunks,
+      },
+      message: `Successfully uploaded ${totalInserted.toLocaleString()} records (Type: ${type})`,
     });
 
   } catch (error) {
     console.error("[Upload Components] Error:", error);
+    
+    // ✅ Better error messages
+    let errorMessage = "Failed to upload components";
+    if (error instanceof Error) {
+      if (error.message.includes("out of memory")) {
+        errorMessage = "File too large - out of memory. Please split into smaller files.";
+      } else if (error.message.includes("timeout")) {
+        errorMessage = "Upload timeout. Please try with a smaller file.";
+      } else {
+        errorMessage = error.message;
+      }
+    }
+
     return NextResponse.json(
       { 
-        error: "Failed to upload components",
-        message: error instanceof Error ? error.message : "Unknown error"
+        error: errorMessage,
+        details: error instanceof Error ? error.message : "Unknown error"
       },
+      { status: 500 }
+    );
+  }
+}
+
+// ✅ Add GET endpoint to check upload status (for future streaming implementation)
+export async function GET(request: NextRequest) {
+  try {
+    await requireAuth();
+
+    // Get recent uploads count
+    const recentCount = await prisma.employeeComponent.count({
+      where: {
+        uploadedAt: {
+          gte: new Date(Date.now() - 24 * 60 * 60 * 1000), // Last 24 hours
+        },
+      },
+    });
+
+    return NextResponse.json({
+      recentUploads: recentCount,
+      maxChunkSize: CHUNK_SIZE,
+      maxFileSize: MAX_FILE_SIZE / (1024 * 1024) + "MB",
+    });
+
+  } catch (error) {
+    console.error("[Upload Components] GET Error:", error);
+    return NextResponse.json(
+      { error: "Failed to fetch upload info" },
       { status: 500 }
     );
   }

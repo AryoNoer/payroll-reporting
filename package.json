@@ -3,11 +3,15 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "next dev",
-    "build": "prisma generate && next build",
-    "start": "next start",
+    "dev": "NODE_OPTIONS='--max-old-space-size=4096' next dev",
+    "build": "NODE_OPTIONS='--max-old-space-size=4096' prisma generate && next build",
+    "start": "NODE_OPTIONS='--max-old-space-size=2048' next start",
     "lint": "eslint",
-    "test": "npm run verify:fields"
+    "test": "npm run verify:fields",
+    "db:push": "prisma db push",
+    "db:migrate": "prisma migrate dev",
+    "db:studio": "prisma studio",
+    "db:optimize": "psql $DATABASE_URL -f scripts/optimize-db.sql"
   },
   "dependencies": {
     "@next-auth/prisma-adapter": "^1.0.7",

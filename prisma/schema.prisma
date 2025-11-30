@@ -1,11 +1,11 @@
 generator client {
-  provider = "prisma-client-js"
-  // previewFeatures = ["jsonProtocol"] // ✅ Faster JSON queries
+  provider        = "prisma-client-js"
+  previewFeatures = ["fullTextSearchPostgres", "fullTextIndex"] // ✅ For better search performance
 }
 
 datasource db {
   provider = "postgresql"
-  url      = env("DATABASE_URL")
+  url      = env("DATABASE_URL") // Uses pgbouncer (port 6543)
 }
 
 model User {
@@ -85,7 +85,7 @@ model Employee {
   createdAt        DateTime  @default(now())
   upload           Upload    @relation(fields: [uploadId], references: [id], onDelete: Cascade)
 
-  @@unique([uploadId, employeeNo]) // ✅ NEW: Prevent duplicate Employee No in same upload
+  @@unique([uploadId, employeeNo])
   @@index([uploadId])
   @@index([employeeNo])
   @@index([name])
@@ -97,7 +97,7 @@ model Report {
   id             String   @id @default(cuid())
   name           String
   description    String?
-  reportType     String   @default("MONTHLY") // ← ADD THIS LINE
+  reportType     String   @default("MONTHLY")
   uploadId       String
   userId         String
   selectedFields Json
@@ -123,17 +123,23 @@ model EmployeeComponent {
   remark2     String?
   remark3     String?
   bulanReport String
-  type        String   @default("HO") // ✅ NEW: "OS" or "HO"
+  type        String   @default("HO")
   uploadedBy  String
   uploadedAt  DateTime @default(now())
   user        User     @relation("EmployeeComponentUploads", fields: [uploadedBy], references: [id], onDelete: Cascade)
 
+  // ✅ CRITICAL: Optimized indexes for 950K rows
   @@index([employeeNo])
   @@index([bulanReport])
   @@index([uploadedBy])
-  @@index([type]) // ✅ NEW
-  @@index([bulanReport, type]) // ✅ NEW: Composite index
-  @@index([komponen, type]) // ✅ NEW: For filtering by component and type
+  @@index([type])
+  @@index([komponen])
+  // ✅ Composite indexes for common queries (MOST IMPORTANT)
+  @@index([employeeNo, komponen]) // For employee lookup
+  @@index([bulanReport, type]) // For dashboard filters
+  @@index([komponen, type]) // For chart queries
+  @@index([komponen, bulanReport, type]) // For complex filters
+  @@index([employeeNo, bulanReport]) // For deduplication queries
   @@map("employee_components")
 }
 
