@@ -264,7 +264,6 @@ export function calculateTotalUangPisah(data: any): number {
  */
 export function calculateTotalTunjanganOperasional(data: any): number {
   return (
-    (Number(data['Netral Operasional dibayar Payroll']) || 0) +  // ✅ TAMBAHAN
     (Number(data['Tunjangan Operasional']) || 0) +
     (Number(data['Additional Tunjangan Operational']) || 0) +
     (Number(data['Rapel Tunjangan Operational']) || 0)
@@ -306,7 +305,7 @@ export function calculateTotalInsentifMitra(data: any): number {
     'Insentif Kerajinan Mitra',
     'Insentif Mitra',
     'Additional Insentif Mitra',
-    'Additional Insentif Mitra 1 - 15',            // ✅ TAMBAHAN (typo di doc kamu)
+    'Additional Insentif Mitra 1 - 15',            
     'Rapel Insentif Mitra',
     'Insentif Mitra Lain',
     'Additional Insentif Mitra Lain',
@@ -316,7 +315,7 @@ export function calculateTotalInsentifMitra(data: any): number {
     'Insentif Pembawaan Mitra 10 Kg',
     'Additional Insentif Per Paket Mitra',
     'Insentif Perbantuan Mitra',
-    'Insentif Produktifitas Mitra',                // ✅ FIX typo (+ instead of space)
+    'Insentif Produktifitas Mitra',               
     'Rapel Insentif Produktifitas Mitra',
     'Target Paket Mitra',
     'Additional Target Paket Mitra',
@@ -537,11 +536,49 @@ export function calculateTotalDeduction(data: any): number {
   return total;
 }
 
-/**
- * BHR Mitra = Pengembalian Potongan Volta TEI (direct copy)
- */
 export function calculateBHRMitra(data: any): number {
-  return Number(data['Pengembalian Potongan Volta TEI']) || 0;
+  return Number(data['BHR Mitra']) || 0;
+}
+
+/**
+ * Total Allowance - Sum of all allowance totals
+ */
+export function calculateTotalAllowance(data: any): number {
+  return (
+    (Number(data['Total Basic Salary']) || 0) +
+    (Number(data['Total Uang Makan']) || 0) +
+    (Number(data['Total Uang Transport']) || 0) +
+    (Number(data['Total Tunjangan Jabatan']) || 0) +
+    (Number(data['Total Insentif Inhouse']) || 0) +
+    (Number(data['Total Uang Pisah']) || 0) +
+    (Number(data['Total Tunjangan Operasional']) || 0) +
+    (Number(data['Total Komisi Karyawan']) || 0) +
+    (Number(data['Total Insentif Mitra']) || 0) +
+    (Number(data['Total Bonus Inhouse']) || 0) +
+    (Number(data['Total Bonus Mitra']) || 0) +
+    (Number(data['Total Lembur']) || 0) +
+    (Number(data['Total Perjalanan Dinas']) || 0) +
+    (Number(data['Total Biaya Pengobatan Karyawan']) || 0) +
+    (Number(data['Total THR']) || 0) +
+    (Number(data['Total BPJS TK']) || 0) +
+    (Number(data['Total BPJS Kes']) || 0)
+  );
+}
+
+/**
+ * Net Salary (before tax) = Total Allowance - Total Deduction
+ */
+export function calculateNetSalaryBeforeTax(data: any): number {
+  const totalAllowance = Number(data['Total Allowance']) || 0;
+  const totalDeduction = Number(data['Total Deduction']) || 0;
+  return totalAllowance - totalDeduction;
+}
+
+/**
+ * Net Salary (after tax) = existing Net Salary field (passthrough)
+ */
+export function calculateNetSalaryAfterTax(data: any): number {
+  return Number(data['Net Salary']) || 0;
 }
 
 /**
@@ -581,9 +618,11 @@ export function applyCalculationsAndDerivations(data: any): any {
   data['Total THR'] = calculateTotalTHR(data);
   data['Total BPJS TK'] = calculateTotalBPJSTK(data);
   data['Total BPJS Kes'] = calculateTotalBPJSKes(data);
+  data['Total Allowance'] = calculateTotalAllowance(data);           // ✅ NEW
   data['Total Deduction'] = calculateTotalDeduction(data);
-  data['BHR Mitra'] = calculateBHRMitra(data);  // ✅ TAMBAHAN
-
+  data['Net Salary (before tax)'] = calculateNetSalaryBeforeTax(data);  // ✅ NEW
+  data['Net Salary (after tax)'] = calculateNetSalaryAfterTax(data);    // ✅ NEW
+  data['BHR Mitra'] = calculateBHRMitra(data);
 
 
   return data;

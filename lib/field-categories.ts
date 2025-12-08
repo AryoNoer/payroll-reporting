@@ -102,6 +102,11 @@ export function getFieldCategory(fieldName: string): FieldCategory {
     return { level1: 'Allowance', level2: 'Insentif', level3: 'Insentif' };
   }
 
+  // Total Allowance
+  if (fieldLower === 'total allowance') {
+    return { level1: 'Allowance', level2: 'Total', level3: 'Total' };
+  }
+
   // ========================================
   // ALLOWANCE - BPJS (Pemberi Kerja)
   // ========================================
@@ -248,9 +253,12 @@ export function getFieldCategory(fieldName: string): FieldCategory {
   // ========================================
   // THP BALANCE
   // ========================================
-  if (fieldLower === 'thp balancing' || fieldLower === 'total deduction') {
-    return { level1: 'THP Balance', level2: 'THP Balance', level3: 'THP Balance' };
-  }
+  if (fieldLower === 'thp balancing' || 
+    fieldLower === 'total deduction' ||
+    fieldLower === 'net salary (before tax)' ||
+    fieldLower === 'net salary (after tax)') {
+  return { level1: 'THP Balance', level2: 'Net Salary', level3: 'Net Salary' };
+}
 
   // ========================================
   // NETRAL

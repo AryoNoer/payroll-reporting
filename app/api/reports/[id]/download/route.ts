@@ -107,6 +107,66 @@ console.log('📊 GENERATING REPORT');
 
     console.log(`✅ Using ${report.reportType} fields: ${allFieldNames.length} fields total`);
 
+    // ✅ Handle THR Cabang Report (Custom Fields)
+    if (report.reportType === "THR_CABANG") {
+      console.log('\n' + '='.repeat(60));
+      console.log('💰 GENERATING THR CABANG REPORT');
+      console.log('='.repeat(60));
+      
+      const { THR_CABANG_FIELDS } = await import("@/lib/thr-cabang-fields");
+      const thrFields = [...THR_CABANG_FIELDS];
+      
+      console.log(`✓ Using THR Cabang fields: ${thrFields.length} fields`);
+      
+      // Build data rows for THR Cabang
+      const excelData = filteredEmployees.map((emp, index) => {
+        const row: any = {
+          'No': index + 1,
+          'Name': emp.name,
+          'Employee No': emp.employeeNo,
+          'Position': emp.position,
+          'Department': emp.orgUnit,
+          'Employment Status': emp.employmentStatus,
+          'Join Date': emp.joinDate ? new Date(emp.joinDate).toLocaleDateString('id-ID') : '',
+          'Terminate Date': emp.terminateDate ? new Date(emp.terminateDate).toLocaleDateString('id-ID') : '',
+        };
+
+        const salaryData = (emp.salaryData as any) || {};
+        const allowanceData = (emp.allowanceData as any) || {};
+        const deductionData = (emp.deductionData as any) || {};
+        const neutralData = (emp.neutralData as any) || {};
+
+        Object.assign(row, salaryData, allowanceData, deductionData, neutralData);
+        const processedRow = applyCalculationsAndDerivations(row);
+
+        const finalRow: any = {};
+        thrFields.forEach(fieldName => {
+          finalRow[fieldName] = processedRow[fieldName] ?? '';
+        });
+
+        return finalRow;
+      });
+
+      const wb = generateTemplatedExcel(excelData, thrFields, {
+        sheetName: 'THR Cabang',
+        autoWidth: true,
+        maxWidth: 50
+      });
+
+      const buffer = workbookToBuffer(wb);
+      
+      console.log(`✓ Excel generated: ${(buffer.length / 1024).toFixed(2)} KB`);
+      console.log('='.repeat(60) + '\n');
+      
+      const sanitizedName = report.name.replace(/[^a-zA-Z0-9-_\s]/g, '_');
+      return new NextResponse(new Uint8Array(buffer), {
+        headers: {
+          "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+          "Content-Disposition": `attachment; filename="${sanitizedName}_THR_Cabang.xlsx"`,
+        },
+      });
+    }
+
     // Build data rows
     console.log('\n📋 Building data rows with ALL columns...');
     // Build data rows

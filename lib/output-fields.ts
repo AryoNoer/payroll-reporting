@@ -171,6 +171,7 @@ export const OUTPUT_FIELDS = [
   'Insentif Kerajinan Mitra',
   'Insentif Mitra',
   'Additional Insentif Mitra',
+  'Additional Insentif Mitra 1 - 15',  // ✅ CHECK if exists
   'Rapel Insentif Mitra',
   'Insentif Mitra Lain',
   'Additional Insentif Mitra Lain',
@@ -291,6 +292,7 @@ export const OUTPUT_FIELDS = [
   'BPJS Kesehatan (Pemberi Kerja)',
   'BPJS Kesehatan (Pemberi Kerja) Gross',
   'Total BPJS Kes',
+  'Total Allowance',
 
   // ========================================
   // DEDUCTION - TUNJANGAN (5 fields)
@@ -369,6 +371,8 @@ export const OUTPUT_FIELDS = [
   // TOTAL DEDUCTION (1 field)
   // ========================================
   'Total Deduction',
+  'Net Salary (before tax)', 
+  'Net Salary (after tax)',
 
   // ========================================
   // THP BALANCE (1 field)
