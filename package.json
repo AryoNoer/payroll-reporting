@@ -25,7 +25,7 @@
     "dotenv": "^17.2.3",
     "exceljs": "^4.4.0",
     "lucide-react": "^0.548.0",
-    "next": "16.0.1",
+    "next": "16.0.7",
     "next-auth": "^4.24.12",
     "papaparse": "^5.5.3",
     "react": "19.2.0",
