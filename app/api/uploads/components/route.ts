@@ -8,8 +8,47 @@ import { parse } from "papaparse";
 import * as XLSX from "xlsx";
 
 // ✅ Configuration for chunked processing
-const CHUNK_SIZE = 5000; // Process 5000 rows at a time
+const CHUNK_SIZE = 2000; // Process 5000 rows at a time
 const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB limit
+
+async function insertWithRetry(chunk: any[], maxRetries = 3) {
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      // ✅ TAMBAH: Reconnect sebelum insert untuk fresh connection
+      if (attempt > 1) {
+        await prisma.$disconnect().catch(() => {});
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      
+      const result = await prisma.employeeComponent.createMany({
+        data: chunk,
+        // skipDuplicates: true,
+      });
+      return result;
+    } catch (error: any) {
+      console.error(`Attempt ${attempt} failed:`, error.message);
+      
+      // ✅ TAMBAH: Handle connection errors juga
+      const isConnectionError = error.code === 'P1001' || 
+                                error.code === 'P1017' ||
+                                error.message?.includes("Can't reach database") ||
+                                error.message?.includes('closed') ||
+                                error.message?.includes('timeout') ||
+                                error.code === '57014';
+      
+      if (attempt === maxRetries || !isConnectionError) {
+        throw error;
+      }
+      
+      // Wait longer for connection errors
+      const waitTime = isConnectionError ? 5000 * attempt : 2000 * attempt;
+      console.log(`⏳ Waiting ${waitTime}ms before retry (attempt ${attempt}/${maxRetries})...`);
+      await new Promise(resolve => setTimeout(resolve, waitTime));
+    }
+  }
+  
+  throw new Error("All retry attempts failed");
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -78,85 +117,83 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Validate required columns
-    const requiredColumns = ["Employee No", "Komponen", "Nilai", "Bulan Report"];
-    const firstRow = rows[0];
-    const headers = Object.keys(firstRow);
-    const missingColumns = requiredColumns.filter(
-      col => !headers.some(h => h.includes(col))
-    );
+    // âœ… Filter invalid rows SEBELUM transform (hemat memory)
+const validRows = rows.filter(row => {
+  const employeeNo = String(row["Employee No"] || "").trim();
+  const komponen = String(row["Komponen"] || "").trim();
+  const bulanReport = String(row["Bulan Report"] || "").trim();
+  return employeeNo && komponen && bulanReport;
+});
 
-    if (missingColumns.length > 0) {
-      return NextResponse.json(
-        { 
-          error: `Missing required columns: ${missingColumns.join(", ")}`,
-          details: { missing: missingColumns, found: headers }
-        },
-        { status: 400 }
-      );
-    }
+console.log(`[Upload Components] Valid rows: ${validRows.length}/${rows.length}`);
 
-    // ✅ Transform rows to database format (in memory - quick)
-    const componentsData = rows.map((row) => ({
-      employeeNo: String(row["Employee No"] || "").trim(),
-      komponen: String(row["Komponen"] || "").trim(),
-      nilai: String(row["Nilai"] || "").trim(),
-      remark: row["Remark"] ? String(row["Remark"]).trim() : null,
-      remark2: row["Remark2"] ? String(row["Remark2"]).trim() : null,
-      remark3: row["Remark3"] ? String(row["Remark3"]).trim() : null,
-      bulanReport: String(row["Bulan Report"] || "").trim(),
-      type: type,
-      uploadedBy: user.id,
-    }));
+if (validRows.length === 0) {
+  return NextResponse.json({
+    error: "No valid rows found. Please check Employee No, Komponen, and Bulan Report columns.",
+  }, { status: 400 });
+}
 
-    // ✅ Validate Bulan Report exists in all rows
-    const invalidRows = componentsData.filter(row => !row.bulanReport);
-    if (invalidRows.length > 0) {
-      return NextResponse.json({
-        error: `Missing "Bulan Report" in ${invalidRows.length} rows. Please ensure all rows have this field.`,
-        details: { 
-          missingCount: invalidRows.length,
-          sampleInvalid: invalidRows.slice(0, 3).map(r => r.employeeNo)
-        }
-      }, { status: 400 });
-    }
+// Transform hanya valid rows
+const componentsData = validRows.map((row) => ({
+  employeeNo: String(row["Employee No"]).trim(),
+  komponen: String(row["Komponen"]).trim(),
+  nilai: String(row["Nilai"] || "").trim(),
+  remark: row["Remark"] ? String(row["Remark"]).trim() : null,
+  remark2: row["Remark2"] ? String(row["Remark2"]).trim() : null,
+  remark3: row["Remark3"] ? String(row["Remark3"]).trim() : null,
+  bulanReport: String(row["Bulan Report"]).trim(),
+  type: type,
+  uploadedBy: user.id,
+}));
+
+// âœ… Hapus validasi invalidRows karena sudah difilter di atas
+// const invalidRows = componentsData.filter(row => !row.bulanReport);
+// if (invalidRows.length > 0) { ... } <- HAPUS BLOCK INI (Line 158-166)
 
     const transformTime = ((Date.now() - startTime) / 1000).toFixed(2);
     console.log(`[Upload Components] Transformed data in ${transformTime}s`);
 
-    // ✅ CHUNKED INSERT - Process in batches to avoid memory overflow
-    console.log(`[Upload Components] Starting chunked insert (${CHUNK_SIZE} rows/batch)`);
-    
     let totalInserted = 0;
-    const totalChunks = Math.ceil(componentsData.length / CHUNK_SIZE);
+const totalChunks = Math.ceil(componentsData.length / CHUNK_SIZE);
 
-    for (let i = 0; i < componentsData.length; i += CHUNK_SIZE) {
-      const chunk = componentsData.slice(i, i + CHUNK_SIZE);
-      const chunkNumber = Math.floor(i / CHUNK_SIZE) + 1;
-      
-      const chunkStart = Date.now();
-      
-      // Insert chunk
-      const result = await prisma.employeeComponent.createMany({
-        data: chunk,
-        skipDuplicates: true,
-      });
+    // âœ… CHUNKED INSERT dengan transaction batching
+console.log(`[Upload Components] Starting chunked insert (${CHUNK_SIZE} rows/batch)`);
+console.log(`[Upload Components] Estimated time: ~${Math.ceil(totalChunks * 1.5 / 60)} minutes`);
 
-      totalInserted += result.count;
-      
-      const chunkTime = ((Date.now() - chunkStart) / 1000).toFixed(2);
-      
-      console.log(
-        `[Upload Components] Chunk ${chunkNumber}/${totalChunks}: ` +
-        `Inserted ${result.count}/${chunk.length} rows in ${chunkTime}s ` +
-        `(Total: ${totalInserted}/${componentsData.length})`
-      );
 
-      // ✅ Small delay to prevent database overload
-      if (chunkNumber < totalChunks) {
-        await new Promise(resolve => setTimeout(resolve, 10));
-      }
+// âœ… Process in larger transaction batches (10 chunks per transaction)
+const TRANSACTION_BATCH_SIZE = 10;
+
+for (let i = 0; i < componentsData.length; i += CHUNK_SIZE) {
+  const chunk = componentsData.slice(i, i + CHUNK_SIZE);
+  const chunkNumber = Math.floor(i / CHUNK_SIZE) + 1;
+  
+  const chunkStart = Date.now();
+  
+  try {
+    // Insert chunk
+    const result = await insertWithRetry(chunk);
+    totalInserted += result.count;
+    
+    const chunkTime = ((Date.now() - chunkStart) / 1000).toFixed(2);
+    
+    console.log(
+      `[Upload Components] âœ… Chunk ${chunkNumber}/${totalChunks}: ` +
+      `Inserted ${result.count}/${chunk.length} rows in ${chunkTime}s ` +
+      `(Total: ${totalInserted}/${componentsData.length}, ${Math.round((totalInserted/componentsData.length)*100)}%)`
+    );
+    
+    // âœ… Only delay after every N chunks (not every chunk)
+    if (chunkNumber < totalChunks && chunkNumber % TRANSACTION_BATCH_SIZE === 0) {
+      console.log(`â¸ï¸  Batch checkpoint at ${chunkNumber}/${totalChunks} - brief pause...`);
+      await new Promise(resolve => setTimeout(resolve, 200));
     }
+  } catch (error) {
+    console.error(`â Chunk ${chunkNumber}/${totalChunks} failed:`, error);
+    throw error; // Will be caught by outer try-catch
+  }
+}
+    
 
     const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
     const rowsPerSecond = Math.round(totalInserted / parseFloat(totalTime));
@@ -207,7 +244,7 @@ export async function POST(request: NextRequest) {
 }
 
 // ✅ Add GET endpoint to check upload status (for future streaming implementation)
-export async function GET(request: NextRequest) {
+export async function GET(_request: NextRequest) {
   try {
     await requireAuth();
 

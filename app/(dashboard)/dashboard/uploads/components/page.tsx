@@ -509,7 +509,7 @@ export default function UploadComponentsPage() {
                         : "text-gray-700"
                     }`}
                   >
-                    Operating Site
+                    Outsource
                   </p>
                   <p className="text-xs text-gray-500">OS Data</p>
                 </div>

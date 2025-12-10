@@ -4,8 +4,9 @@ generator client {
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL") // Uses pgbouncer (port 6543)
+  provider  = "postgresql"
+  url       = env("DATABASE_URL") // Pooler untuk query biasa
+  directUrl = env("DATABASE_DIRECT_URL") // Direct untuk migrations & bulk insert
 }
 
 model User {

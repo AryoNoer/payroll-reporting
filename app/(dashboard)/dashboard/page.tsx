@@ -112,7 +112,7 @@ export default function DashboardPage() {
 
   const typeOptions = [
     { value: "HO", label: "Head Office (HO)" },
-    { value: "OS", label: "Operating Site (OS)" },
+    { value: "OS", label: "Outsource (OS)" },
   ];
 
   useEffect(() => {
@@ -468,7 +468,7 @@ export default function DashboardPage() {
                     cx="50%"
                     cy="50%"
                     labelLine={false}
-                    label={(props: any) => `${props.name}: ${props.value}`}
+                    label={false} // ← HIDE label di chart
                     outerRadius={100}
                     fill="#8884d8"
                     dataKey="value"
@@ -590,28 +590,7 @@ export default function DashboardPage() {
             </div>
           ) : (
             <>
-              <div className="flex items-center justify-center gap-8 mb-6">
-                {genderData.data.map((gender) => (
-                  <div key={gender.name} className="text-center">
-                    <div className="text-6xl mb-2">
-                      {gender.name === "Male"
-                        ? "👨"
-                        : gender.name === "Female"
-                        ? "👩"
-                        : "❓"}
-                    </div>
-                    <p className="text-2xl font-bold text-gray-900">
-                      {gender.value}
-                    </p>
-                    <p className="text-sm text-gray-600">{gender.name}</p>
-                    <p className="text-xs text-gray-500">
-                      {gender.percentage.toFixed(1)}%
-                    </p>
-                  </div>
-                ))}
-              </div>
-
-              <ResponsiveContainer width="100%" height={200}>
+              <ResponsiveContainer width="100%" height={300}>
                 <PieChart>
                   <Pie
                     data={genderData.data}
@@ -621,7 +600,9 @@ export default function DashboardPage() {
                     outerRadius={80}
                     fill="#8884d8"
                     dataKey="value"
-                    label={(props: any) => `${props.percentage.toFixed(0)}%`}
+                    label={(props: any) =>
+                      `${props.name.substring(0, 10)}: ${props.value}`
+                    } // Potong nama
                   >
                     {genderData.data.map((entry, index) => (
                       <Cell

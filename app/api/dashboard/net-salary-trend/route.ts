@@ -23,14 +23,15 @@ export async function GET(request: NextRequest) {
     };
 
     if (year && month) {
-      whereConditions.bulanReport = { startsWith: `${year}-${month.padStart(2, "0")}` };
-    } else if (year) {
-      whereConditions.bulanReport = { startsWith: year };
-    }
+  whereConditions.bulanReport = { contains: `${year}-${month.padStart(2, "0")}` };
+} else if (year) {
+  whereConditions.bulanReport = { contains: year };
+}
+// ✅ JIKA TIDAK ADA FILTER, AMBIL SEMUA DATA (hapus kondisi bulanReport)
 
-    if (type && (type === "OS" || type === "HO")) {
-      whereConditions.type = type;
-    }
+if (type && (type === "HO" || type === "OS")) {
+  whereConditions.type = type;
+}
 
     // Get Net Salary data
     const netSalaryData = await prisma.employeeComponent.findMany({

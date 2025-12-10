@@ -8,10 +8,14 @@ export const prisma =
   new PrismaClient({
     log: process.env.NODE_ENV === 'development' ? ['error', 'warn'] : ['error'],
     datasources: {
-      db: {
-        url: process.env.DATABASE_URL, // Uses pgbouncer connection
-      },
-    },
+  db: {
+    url: process.env.DATABASE_URL 
+      ? process.env.DATABASE_URL.includes('?')
+        ? `${process.env.DATABASE_URL}&statement_timeout=180000`
+        : `${process.env.DATABASE_URL}?statement_timeout=180000`
+      : undefined
+  },
+},
     // ✅ Supabase-optimized transaction settings
     transactionOptions: {
       maxWait: 30000,  // 30 seconds (Supabase has timeout limits)
