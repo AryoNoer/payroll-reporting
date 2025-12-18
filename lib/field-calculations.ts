@@ -541,7 +541,7 @@ export function calculateBHRMitra(data: any): number {
 }
 
 /**
- * Total Allowance - Sum of all allowance totals
+ * Total Allowance - Sum of all allowance totalss
  */
 export function calculateTotalAllowance(data: any): number {
   return (
