@@ -8,7 +8,7 @@ import { parse } from "papaparse";
 import * as XLSX from "xlsx";
 
 // ✅ Configuration for chunked processing
-const CHUNK_SIZE = 2000; // Process 5000 rows at a time
+const CHUNK_SIZE = 5000; // Process 5000 rows at a time
 const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB limit
 
 async function insertWithRetry(chunk: any[], maxRetries = 3) {

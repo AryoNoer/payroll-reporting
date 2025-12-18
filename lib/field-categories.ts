@@ -107,6 +107,13 @@ export function getFieldCategory(fieldName: string): FieldCategory {
     return { level1: 'Allowance', level2: 'Total', level3: 'Total' };
   }
 
+  // Total Allowance
+  if (fieldLower === 'tax (allowance)') {
+    return { level1: 'Allowance', level2: 'Total', level3: 'Total' };
+  }
+
+  
+
   // ========================================
   // ALLOWANCE - BPJS (Pemberi Kerja)
   // ========================================
