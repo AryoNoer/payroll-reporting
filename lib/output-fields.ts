@@ -293,7 +293,7 @@ export const OUTPUT_FIELDS = [
   'BPJS Kesehatan (Pemberi Kerja) Gross',
   'Total BPJS Kes',
   'Total Allowance',
-  "Tax (Allowance)",
+  "Tax Allowance",
 
   // ========================================
   // DEDUCTION - TUNJANGAN (5 fields)
