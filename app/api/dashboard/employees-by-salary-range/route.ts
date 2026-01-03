@@ -72,7 +72,7 @@ if (year && year !== '(All)') {
     
     const ranges = [
       { name: 'between 20,000-30,000', min: 20000, max: 30000, key: 'range1' },
-      { name: 'between 30,000-450,0...', min: 30000, max: 450000, key: 'range2' },
+      { name: 'between 30,000-450,000', min: 30000, max: 450000, key: 'range2' },
       { name: 'More then 90,000', min: 90000, max: Infinity, key: 'range3' }
     ];
 

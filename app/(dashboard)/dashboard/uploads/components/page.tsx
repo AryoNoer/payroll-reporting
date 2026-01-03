@@ -17,6 +17,11 @@ import {
   Clock,
   Zap,
 } from "lucide-react";
+import {
+  createBrowserClient,
+  storageHelpers,
+  STORAGE_BUCKETS,
+} from "@/lib/supabase";
 
 interface Toast {
   id: number;
@@ -129,15 +134,35 @@ export default function UploadComponentsPage() {
       message: "Preparing file for upload...",
     });
 
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("type", selectedType);
-
     try {
-      // ✅ Show uploading phase
+      // ✅ STEP 1: Upload file langsung ke Supabase Storage
       setProgress({
         phase: "uploading",
-        message: "Uploading file to server...",
+        message: "Uploading file to cloud storage...",
+        percentage: 10,
+      });
+
+      const uploadPath = `${selectedType}/${Date.now()}-${file.name}`;
+      const {
+        url: fileUrl,
+        path: filePath,
+        error: uploadError,
+      } = await storageHelpers.uploadFile(
+        STORAGE_BUCKETS.PAYROLL_COMPONENTS,
+        file,
+        uploadPath
+      );
+
+      if (uploadError) {
+        throw new Error(`Upload failed: ${uploadError}`);
+      }
+
+      console.log(`✅ File uploaded to Storage:`, filePath);
+
+      // ✅ STEP 2: Kirim metadata ke API untuk diproses
+      setProgress({
+        phase: "uploading",
+        message: "File uploaded, processing data...",
         percentage: 30,
       });
 
@@ -145,7 +170,16 @@ export default function UploadComponentsPage() {
 
       const response = await fetch("/api/uploads/components", {
         method: "POST",
-        body: formData,
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          fileUrl,
+          filePath,
+          fileName: file.name,
+          fileSize: file.size,
+          type: selectedType,
+        }),
       });
 
       const data = await response.json();
@@ -164,10 +198,16 @@ export default function UploadComponentsPage() {
 
       if (!response.ok) {
         setProgress(null);
+
+        // ✅ Cleanup: Delete uploaded file jika processing gagal
+        await storageHelpers
+          .deleteFiles(STORAGE_BUCKETS.PAYROLL_COMPONENTS, [filePath])
+          .catch((err) => console.error("Failed to cleanup file:", err));
+
         showModal(
           "error",
           "Upload Failed",
-          data.error || "Failed to upload file",
+          data.error || "Failed to process file",
           data.details
         );
         return;
@@ -219,7 +259,9 @@ export default function UploadComponentsPage() {
       showModal(
         "error",
         "Network Error",
-        "Failed to connect to the server. Please check your connection and try again.\n\nFor very large files (500K+ rows), please ensure:\n• Stable internet connection\n• Sufficient browser memory\n• Server has enough resources"
+        err instanceof Error
+          ? err.message
+          : "Failed to connect to the server. Please check your connection and try again.\n\nFor very large files (500K+ rows), please ensure:\n• Stable internet connection\n• Sufficient browser memory\n• Server has enough resources"
       );
       console.error(err);
     } finally {
@@ -425,9 +467,9 @@ export default function UploadComponentsPage() {
               ⚡ Optimized for Large Files
             </h4>
             <p className="text-sm text-indigo-800">
-              This system can handle up to <strong>950,000+ rows</strong> with
-              chunked processing. Files are processed in batches of 5,000 rows
-              to prevent memory issues.
+              This system uses <strong>cloud storage</strong> to handle up to{" "}
+              <strong>950,000+ rows</strong>. Files are uploaded directly to
+              secure storage, then processed in batches of 5,000 rows.
             </p>
           </div>
         </div>
@@ -613,11 +655,11 @@ export default function UploadComponentsPage() {
             <Zap className="w-5 h-5 text-green-600 shrink-0 mt-0.5" />
             <div>
               <h4 className="font-semibold text-green-900 mb-1 text-sm">
-                Chunked Processing
+                Cloud Storage
               </h4>
               <p className="text-xs text-green-800">
-                Data is processed in batches of 5,000 rows to prevent memory
-                overflow
+                Files are uploaded directly to secure cloud storage, bypassing
+                server limits
               </p>
             </div>
           </div>
@@ -642,10 +684,10 @@ export default function UploadComponentsPage() {
             <CheckCircle className="w-5 h-5 text-purple-600 shrink-0 mt-0.5" />
             <div>
               <h4 className="font-semibold text-purple-900 mb-1 text-sm">
-                Duplicate Detection
+                Chunked Processing
               </h4>
               <p className="text-xs text-purple-800">
-                Automatically skips duplicate records to maintain data integrity
+                Data processed in 5,000-row batches to prevent memory overflow
               </p>
             </div>
           </div>

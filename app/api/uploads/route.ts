@@ -5,10 +5,25 @@ import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import { parse } from "papaparse";
-import { writeFile, mkdir } from "fs/promises";
-import { join } from "path";
-import { existsSync } from "fs";
 import { applyCalculationsAndDerivations } from "@/lib/field-calculations";
+import { createClient } from '@supabase/supabase-js';
+
+// Create Supabase ADMIN client with SERVICE_ROLE key (bypasses RLS)
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
+
+if (!supabaseUrl || !supabaseServiceKey) {
+  throw new Error('Missing Supabase environment variables');
+}
+
+const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
+  auth: {
+    autoRefreshToken: false,
+    persistSession: false,
+  },
+});
+
+const STORAGE_BUCKET = 'payroll-components';
 
 // Error logger helper
 class UploadError extends Error {
@@ -22,25 +37,12 @@ class UploadError extends Error {
   }
 }
 
-/**
- * Fields that should ALWAYS be treated as text/string
- */
 const TEXT_ONLY_FIELDS = new Set([
-  'Jobstatus Code',
-  'No KTP',
-  'Gov. Tax File No.',
-  'Employee No',
-  'Cost Center Code',
-  'Work Location Code',
-  'Tax Location Code',
-  'Tax Location Name',
-  'Company Bank Account',
-  'Bank Account',
-  'Insurance No BPJSKT',
-  'Insurance No BPJSKES',
-  'Tax File No',
-  'Account Name',
-  'Company Account Name'
+  'Jobstatus Code', 'No KTP', 'Gov. Tax File No.', 'Employee No',
+  'Cost Center Code', 'Work Location Code', 'Tax Location Code',
+  'Tax Location Name', 'Company Bank Account', 'Bank Account',
+  'Insurance No BPJSKT', 'Insurance No BPJSKES', 'Tax File No',
+  'Account Name', 'Company Account Name'
 ]);
 
 const BATCH_SIZE = 100;
@@ -48,13 +50,11 @@ const BATCH_SIZE = 100;
 export async function GET() {
   try {
     const user = await requireAuth();
-
     const uploads = await prisma.upload.findMany({
       where: { userId: user.id },
       orderBy: { uploadedAt: "desc" },
       take: 20,
     });
-
     return NextResponse.json(uploads);
   } catch (error) {
     console.error("[GET /api/uploads] Error:", error);
@@ -63,9 +63,8 @@ export async function GET() {
 }
 
 export async function POST(request: NextRequest) {
-  console.log("📥 [DEBUG] Request method:", request.method);
   const startTime = Date.now();
-  console.log("\n=== UPLOAD REQUEST STARTED ===");
+  console.log("\n=== UPLOAD REQUEST STARTED (BACKEND STORAGE) ===");
   
   try {
     // Step 1: Authenticate user
@@ -86,43 +85,76 @@ export async function POST(request: NextRequest) {
       throw new UploadError("Period is required", "MISSING_PERIOD");
     }
 
-    console.log(`✓ File: ${file.name} (${(file.size / 1024).toFixed(2)} KB)`);
+    console.log(`✓ File: ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB)`);
     console.log(`✓ Period: ${period}`);
 
-    // Step 3: Read file content
-    console.log("[Step 3] Reading file content...");
-    const bytes = await file.arrayBuffer();
-    const buffer = Buffer.from(bytes);
+    // Step 3: Upload to Supabase Storage (BACKEND with service_role - bypasses RLS)
+    console.log("[Step 3] Uploading to Supabase Storage...");
+    const timestamp = Date.now();
+    const sanitizedFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+    const storagePath = `payroll/${timestamp}-${sanitizedFileName}`;
+
+    const fileBuffer = await file.arrayBuffer();
+    const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
+      .from(STORAGE_BUCKET)
+      .upload(storagePath, fileBuffer, {
+        contentType: file.type || 'text/csv',
+        cacheControl: '3600',
+        upsert: false,
+      });
+
+    if (uploadError) {
+      console.error("❌ Storage upload error:", uploadError);
+      throw new UploadError(
+        `Storage upload failed: ${uploadError.message}`,
+        "STORAGE_UPLOAD_ERROR",
+        uploadError
+      );
+    }
+
+    console.log(`✓ File uploaded to storage: ${storagePath}`);
+
+    // Step 4: Download file from storage for processing
+    console.log("[Step 4] Downloading file from storage...");
+    const { data: fileData, error: downloadError } = await supabaseAdmin.storage
+      .from(STORAGE_BUCKET)
+      .download(storagePath);
+
+    if (downloadError || !fileData) {
+      // Clean up uploaded file
+      await supabaseAdmin.storage.from(STORAGE_BUCKET).remove([storagePath]);
+      throw new UploadError(
+        `Failed to download file: ${downloadError?.message}`,
+        "STORAGE_DOWNLOAD_ERROR"
+      );
+    }
+
+    // Convert Blob to text
+    let content = await fileData.text();
+    console.log(`✓ File downloaded: ${content.length} characters`);
+
+    // Step 5: Process file content
+    console.log("[Step 5] Processing file content...");
     
-    let content: string;
-    try {
-      content = buffer.toString("utf-8");
-      
-      if (content.charCodeAt(0) === 0xFEFF) {
-        content = content.substring(1);
-        console.log('  ⚠ Removed UTF-8 BOM');
-      }
-      
-      content = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-      
-    } catch (error) {
-      console.warn('  ⚠ UTF-8 decode failed, trying latin1...');
-      content = buffer.toString("latin1");
-      content = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+    // Handle BOM
+    if (content.charCodeAt(0) === 0xFEFF) {
+      content = content.substring(1);
+      console.log('  ⚠ Removed UTF-8 BOM');
     }
     
-    console.log(`✓ File read: ${content.length} characters`);
+    // Normalize line endings
+    content = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
-    // Step 3.5: Handle double header rows
-    console.log("[Step 3.5] Detecting header structure...");
+    // Step 6: Handle double header rows
+    console.log("[Step 6] Detecting header structure...");
     const lines = content.split('\n');
     let finalContent = content;
     
     if (lines.length > 1) {
       const firstLine = lines[0] || '';
       const secondLine = lines[1] || '';
-      
       const firstLineUpper = firstLine.toUpperCase();
+      
       const hasCategories = 
         firstLineUpper.includes('SALARY') || 
         firstLineUpper.includes('ALLOWANCE') ||
@@ -135,7 +167,7 @@ export async function POST(request: NextRequest) {
         secondLine.includes('Employee');
       
       if (hasCategories && secondLineHasNames) {
-        console.log('✓ Detected double header format');
+        console.log('✓ Detected double header format, merging...');
         
         const categoryParse = parse(firstLine, { header: false });
         const fieldParse = parse(secondLine, { header: false });
@@ -146,7 +178,6 @@ export async function POST(request: NextRequest) {
         const mergedHeaders: string[] = [];
         for (let i = 0; i < Math.max(categories.length, fields.length); i++) {
           const field = (fields[i] || '').trim();
-          
           if (!field || /^\d+$/.test(field)) {
             mergedHeaders.push((categories[i] || '').trim() || `Column_${i}`);
           } else {
@@ -156,14 +187,11 @@ export async function POST(request: NextRequest) {
         
         const dataLines = lines.slice(2);
         finalContent = mergedHeaders.join(',') + '\n' + dataLines.join('\n');
-        
-        console.log('✓ Headers merged');
       }
     }
 
-    // Step 4: Parse CSV
-    console.log("[Step 4] Parsing CSV...");
-    
+    // Step 7: Parse CSV
+    console.log("[Step 7] Parsing CSV...");
     const firstDataLine = finalContent.split('\n')[0] || '';
     const detectedDelimiter = firstDataLine.includes('\t') ? '\t' : ',';
     
@@ -176,51 +204,42 @@ export async function POST(request: NextRequest) {
       escapeChar: '"',
       transformHeader: (header: string, index: number) => {
         const cleanHeader = header.trim();
-        if (!cleanHeader) {
-          return `Column_${index}`;
-        }
-        return cleanHeader;
+        return !cleanHeader ? `Column_${index}` : cleanHeader;
       },
       transform: (value: string) => value?.trim() || "",
     });
 
     const { data, errors, meta } = parseResult;
 
-    console.log(`✓ CSV parsed successfully`);
-    console.log(`  - Rows: ${(data as any[]).length}`);
-    console.log(`  - Columns: ${meta.fields?.length || 0}`);
+    console.log(`✓ CSV parsed: ${(data as any[]).length} rows, ${meta.fields?.length || 0} columns`);
 
     if (errors.length > 0) {
-      console.error("\n❌ CSV Parse Errors:");
-      console.error(`Total errors: ${errors.length}`);
+      console.error(`❌ CSV Parse Errors: ${errors.length}`);
+      await supabaseAdmin.storage.from(STORAGE_BUCKET).remove([storagePath]);
       
       let errorMessage = "CSV parsing failed";
       if (errors[0].code === "TooManyFields") {
         errorMessage = `CSV format error: File has inconsistent columns.`;
       }
       
-      throw new UploadError(
-        errorMessage,
-        "PARSE_ERROR",
-        { totalErrors: errors.length }
-      );
+      throw new UploadError(errorMessage, "PARSE_ERROR", { totalErrors: errors.length });
     }
 
     if (!data || (data as any[]).length === 0) {
+      await supabaseAdmin.storage.from(STORAGE_BUCKET).remove([storagePath]);
       throw new UploadError("CSV file is empty", "EMPTY_FILE");
     }
 
-    // Step 5: Validate headers
-    console.log("[Step 5] Validating CSV structure...");
+    // Step 8: Validate headers
+    console.log("[Step 8] Validating CSV structure...");
     const requiredColumns = ["Name", "Employee No"];
-    const firstRow = (data as any[])[0];
-    const headers = Object.keys(firstRow);
-    
+    const headers = Object.keys((data as any[])[0]);
     const missingColumns = requiredColumns.filter(
       col => !headers.some(h => h.includes(col))
     );
 
     if (missingColumns.length > 0) {
+      await supabaseAdmin.storage.from(STORAGE_BUCKET).remove([storagePath]);
       throw new UploadError(
         `Missing required columns: ${missingColumns.join(", ")}`,
         "MISSING_COLUMNS",
@@ -228,8 +247,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // ✅ NEW: Step 5.5 - Check for duplicates WITHIN the file
-    console.log("[Step 5.5] Checking for duplicate Employee No in file...");
+    // Step 9: Check for duplicates WITHIN the file
+    console.log("[Step 9] Checking for duplicate Employee No in file...");
     const employeeNosInFile = new Set<string>();
     const duplicatesInFile: string[] = [];
     
@@ -238,13 +257,13 @@ export async function POST(request: NextRequest) {
       if (empNo && employeeNosInFile.has(empNo)) {
         duplicatesInFile.push(`${empNo} (Row ${index + 2})`);
       }
-      if (empNo) {
-        employeeNosInFile.add(empNo);
-      }
+      if (empNo) employeeNosInFile.add(empNo);
     });
 
     if (duplicatesInFile.length > 0) {
       console.error(`❌ Found ${duplicatesInFile.length} duplicate Employee No in file`);
+      await supabaseAdmin.storage.from(STORAGE_BUCKET).remove([storagePath]);
+      
       throw new UploadError(
         `File contains duplicate Employee No. Please remove duplicates and try again.`,
         "DUPLICATE_IN_FILE",
@@ -259,8 +278,8 @@ export async function POST(request: NextRequest) {
     }
     console.log(`✓ No duplicates within file`);
 
-    // ✅ NEW: Step 5.6 - Check for duplicates with SAME PERIOD
-    console.log("[Step 5.6] Checking for duplicates with same period...");
+    // Step 10: Check for duplicates with SAME PERIOD
+    console.log("[Step 10] Checking for duplicates with same period...");
     const uploadPeriod = new Date(period + "-01");
     
     const existingEmployees = await prisma.employee.findMany({
@@ -285,32 +304,16 @@ export async function POST(request: NextRequest) {
 
     if (existingEmployees.length > 0) {
       console.warn(`⚠ Found ${existingEmployees.length} employees already exist for period ${period}`);
-      const duplicateList = existingEmployees.slice(0, 10).map(e => 
-        `${e.employeeNo} - ${e.name} (from ${e.upload.originalName})`
-      );
-      
       console.log(`  Will skip these ${existingEmployees.length} duplicate employees during insert`);
     } else {
       console.log(`✓ No duplicates with same period found`);
     }
 
-    // Step 6: Save file
-    console.log("[Step 6] Saving file to disk...");
-    const uploadDir = join(process.cwd(), "uploads");
-    if (!existsSync(uploadDir)) {
-      await mkdir(uploadDir, { recursive: true });
-    }
-
-    const fileName = `${Date.now()}-${file.name.replace(/[^a-zA-Z0-9.-]/g, '_')}`;
-    const filePath = join(uploadDir, fileName);
-    await writeFile(filePath, buffer);
-    console.log(`✓ File saved: ${fileName}`);
-
-    // Step 7: Create database record
-    console.log("[Step 7] Creating upload record...");
+    // Step 11: Create database record
+    console.log("[Step 11] Creating upload record...");
     const upload = await prisma.upload.create({
       data: {
-        fileName,
+        fileName: storagePath, // Store storage path
         originalName: file.name,
         fileSize: file.size,
         rowCount: (data as any[]).length,
@@ -321,8 +324,8 @@ export async function POST(request: NextRequest) {
     });
     console.log(`✓ Upload record created: ${upload.id}`);
 
-    // Step 8: Start background processing
-    console.log("[Step 8] Starting background processing...");
+    // Step 12: Start background processing
+    console.log("[Step 12] Starting background processing...");
     processUploadData(upload.id, data as any[], headers).catch((error) => {
       console.error("❌ Background processing error:", error);
     });
@@ -331,7 +334,6 @@ export async function POST(request: NextRequest) {
     console.log(`✓ Upload completed in ${duration}ms`);
     console.log("=== UPLOAD REQUEST COMPLETED ===\n");
 
-    // ✅ NEW: Return warning if duplicates exist
     return NextResponse.json({
       ...upload,
       warning: existingEmployees.length > 0 ? {
@@ -344,6 +346,7 @@ export async function POST(request: NextRequest) {
     const duration = Date.now() - startTime;
     console.error("\n❌ UPLOAD FAILED");
     console.error(`Duration: ${duration}ms`);
+    console.error("Error:", error);
     
     if (error instanceof UploadError) {
       return NextResponse.json(
@@ -356,7 +359,6 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    console.error("Unexpected error:", error);
     return NextResponse.json(
       { 
         error: "Failed to upload file", 
@@ -596,11 +598,11 @@ async function processUploadData(
         }
       }
 
-      // ✅ Batch insert with skipDuplicates
+      // Batch insert with skipDuplicates
       if (batchData.length > 0) {
         const result = await prisma.employee.createMany({
           data: batchData,
-          skipDuplicates: true, // Skip if uploadId+employeeNo already exists
+          skipDuplicates: true,
         });
 
         const actualInserted = result.count;

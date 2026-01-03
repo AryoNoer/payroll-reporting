@@ -23,30 +23,42 @@ export const authOptions: NextAuthOptions = {
         password: { label: "Password", type: "password" },
       },
       async authorize(credentials) {
-        if (!credentials?.email || !credentials?.password) {
-          throw new Error("Invalid credentials");
-        }
+  if (!credentials?.email || !credentials?.password) {
+    throw new Error("Invalid credentials");
+  }
 
-        const user = await prisma.user.findUnique({
-          where: { email: credentials.email },
-        });
+  // ✅ ADD THIS - Debug log
+  console.log('🔐 Attempting login:', credentials.email);
 
-        if (!user || !user.password) throw new Error("Invalid credentials");
+  const user = await prisma.user.findUnique({
+    where: { email: credentials.email },
+  });
 
-        const isPasswordValid = await bcrypt.compare(
-          credentials.password,
-          user.password
-        );
+  // ✅ ADD THIS - Debug log
+  console.log('👤 User found:', user ? 'YES' : 'NO');
+  if (user) {
+    console.log('   - Has password:', !!user.password);
+  }
 
-        if (!isPasswordValid) throw new Error("Invalid credentials");
+  if (!user || !user.password) throw new Error("Invalid credentials");
 
-        return {
-          id: user.id,
-          email: user.email,
-          name: user.name,
-          role: user.role,
-        };
-      },
+  const isPasswordValid = await bcrypt.compare(
+    credentials.password,
+    user.password
+  );
+
+  // ✅ ADD THIS - Debug log
+  console.log('🔑 Password valid:', isPasswordValid);
+
+  if (!isPasswordValid) throw new Error("Invalid credentials");
+
+  return {
+    id: user.id,
+    email: user.email,
+    name: user.name,
+    role: user.role,
+  };
+},
     }),
   ],
   callbacks: {

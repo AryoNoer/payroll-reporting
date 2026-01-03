@@ -16,6 +16,7 @@ import {
   AlertTriangle,
 } from "lucide-react";
 import { format } from "date-fns";
+// Remove unused import - we'll upload via backend now
 
 interface UploadItem {
   id: string;
@@ -54,6 +55,8 @@ export default function UploadsPage() {
   const [file, setFile] = useState<File | null>(null);
   const [period, setPeriod] = useState("");
   const [uploading, setUploading] = useState(false);
+  const [uploadProgress, setUploadProgress] = useState(0);
+  const [uploadStage, setUploadStage] = useState<string>("");
   const [uploads, setUploads] = useState<UploadItem[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<UploadError | null>(null);
@@ -201,8 +204,10 @@ export default function UploadsPage() {
         return;
       }
 
-      if (selectedFile.size > 20 * 1024 * 1024) {
-        showToast("error", "File size exceeds 20MB limit");
+      // Updated file size limit to 500MB (matching Supabase bucket)
+      const MAX_SIZE = 500 * 1024 * 1024; // 500MB
+      if (selectedFile.size > MAX_SIZE) {
+        showToast("error", "File size exceeds 500MB limit");
         return;
       }
 
@@ -219,22 +224,31 @@ export default function UploadsPage() {
     }
 
     setUploading(true);
+    setUploadProgress(0);
+    setUploadStage("Preparing upload...");
     setError(null);
 
-    const formData = new FormData();
-    formData.append("file", file);
-    formData.append("period", period);
-
     try {
+      // ✅ Upload file via FormData to backend (backend will handle Supabase upload)
+      setUploadStage("Uploading file...");
+      setUploadProgress(20);
+
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("period", period);
+
+      setUploadStage("Processing data...");
+      setUploadProgress(50);
+
       const response = await fetch("/api/uploads", {
         method: "POST",
-        body: formData,
+        body: formData, // Send FormData directly
       });
 
       const data = await response.json();
 
       if (!response.ok) {
-        // ✅ NEW: Show detailed error for duplicates
+        // Show detailed error for duplicates
         if (data.code === "DUPLICATE_IN_FILE") {
           showModal(
             "error",
@@ -250,7 +264,7 @@ export default function UploadsPage() {
             data.details
           );
         }
-        
+
         setError({
           message: data.error || "Upload failed",
           code: data.code,
@@ -259,7 +273,10 @@ export default function UploadsPage() {
         return;
       }
 
-      // ✅ NEW: Show warning if duplicates with same period
+      setUploadProgress(100);
+      setUploadStage("Upload completed successfully!");
+
+      // Show warning if duplicates with same period
       if (data.warning) {
         showModal(
           "warning",
@@ -288,14 +305,21 @@ export default function UploadsPage() {
         );
       }
     } catch (err) {
+      console.error("Upload error:", err);
       showModal(
         "error",
-        "Network Error",
-        "Failed to connect to the server. Please check your connection and try again."
+        "Upload Error",
+        err instanceof Error
+          ? err.message
+          : "Failed to upload file. Please try again."
       );
-      console.error(err);
+      setError({
+        message: err instanceof Error ? err.message : "Upload failed",
+      });
     } finally {
       setUploading(false);
+      setUploadProgress(0);
+      setUploadStage("");
     }
   };
 
@@ -406,7 +430,9 @@ export default function UploadsPage() {
 
             {/* Modal Body */}
             <div className="px-6 py-4">
-              <p className="text-gray-700 whitespace-pre-line">{modal.message}</p>
+              <p className="text-gray-700 whitespace-pre-line">
+                {modal.message}
+              </p>
 
               {modal.details && (
                 <details className="mt-3">
@@ -414,15 +440,22 @@ export default function UploadsPage() {
                     View technical details
                   </summary>
                   <div className="mt-2 text-xs bg-gray-100 p-3 rounded overflow-x-auto max-h-48">
-                    {/* ✅ Show duplicate list nicely */}
                     {modal.details.duplicates && (
                       <div className="space-y-1">
-                        <p className="font-semibold mb-2">Duplicate Employee Numbers:</p>
-                        {modal.details.duplicates.map((dup: string, idx: number) => (
-                          <div key={idx} className="text-red-700">• {dup}</div>
-                        ))}
+                        <p className="font-semibold mb-2">
+                          Duplicate Employee Numbers:
+                        </p>
+                        {modal.details.duplicates.map(
+                          (dup: string, idx: number) => (
+                            <div key={idx} className="text-red-700">
+                              • {dup}
+                            </div>
+                          )
+                        )}
                         {modal.details.message && (
-                          <p className="mt-2 text-gray-600 italic">{modal.details.message}</p>
+                          <p className="mt-2 text-gray-600 italic">
+                            {modal.details.message}
+                          </p>
                         )}
                       </div>
                     )}
@@ -510,10 +543,13 @@ export default function UploadsPage() {
                 onChange={handleFileChange}
                 className="hidden"
                 id="file-upload"
+                disabled={uploading}
               />
               <label
                 htmlFor="file-upload"
-                className="flex-1 cursor-pointer border-2 border-dashed border-gray-300 rounded-lg p-6 hover:border-indigo-500 transition-colors"
+                className={`flex-1 cursor-pointer border-2 border-dashed border-gray-300 rounded-lg p-6 hover:border-indigo-500 transition-colors ${
+                  uploading ? "opacity-50 cursor-not-allowed" : ""
+                }`}
               >
                 <div className="text-center">
                   <Upload className="w-10 h-10 text-gray-400 mx-auto mb-2" />
@@ -523,7 +559,7 @@ export default function UploadsPage() {
                         {file.name}
                       </p>
                       <p className="text-xs text-gray-500 mt-1">
-                        {(file.size / 1024).toFixed(2)} KB
+                        {(file.size / (1024 * 1024)).toFixed(2)} MB
                       </p>
                     </>
                   ) : (
@@ -535,7 +571,7 @@ export default function UploadsPage() {
               </label>
             </div>
             <p className="text-xs text-gray-500 mt-1">
-              Maximum file size: 20MB. Format: CSV only.
+              Maximum file size: 500MB. Format: CSV only.
             </p>
           </div>
 
@@ -548,9 +584,30 @@ export default function UploadsPage() {
               type="month"
               value={period}
               onChange={(e) => setPeriod(e.target.value)}
-              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              disabled={uploading}
+              className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent disabled:opacity-50"
             />
           </div>
+
+          {/* Upload Progress */}
+          {uploading && (
+            <div className="space-y-2">
+              <div className="flex items-center justify-between text-sm">
+                <span className="font-medium text-indigo-600">
+                  {uploadStage}
+                </span>
+                <span className="font-semibold text-indigo-600">
+                  {uploadProgress}%
+                </span>
+              </div>
+              <div className="w-full bg-gray-200 rounded-full h-3">
+                <div
+                  className="bg-indigo-600 h-3 rounded-full transition-all duration-300 ease-out"
+                  style={{ width: `${uploadProgress}%` }}
+                ></div>
+              </div>
+            </div>
+          )}
 
           {/* Upload Button */}
           <button
@@ -561,7 +618,7 @@ export default function UploadsPage() {
             {uploading ? (
               <>
                 <Loader2 className="w-5 h-5 animate-spin mr-2" />
-                Uploading & Processing...
+                {uploadStage || "Uploading & Processing..."}
               </>
             ) : (
               <>
@@ -688,7 +745,12 @@ export default function UploadsPage() {
           <li>• Required columns: Name, Employee No</li>
           <li>• No duplicate Employee No within the same file</li>
           <li>• Duplicates with same period will be automatically skipped</li>
-          <li>• Maximum file size: 20MB</li>
+          <li>
+            • Maximum file size: 500MB (supports large files via cloud storage)
+          </li>
+          <li>
+            • File is securely uploaded to cloud storage before processing
+          </li>
         </ul>
       </div>
     </div>

@@ -296,9 +296,7 @@ export default function DashboardPage() {
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
         {/* Chart 4: Payroll By Job Type */}
         <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-lg font-semibold mb-4">
-            Payroll Summary By Job Type
-          </h2>
+          <h2 className="text-lg font-semibold mb-4">Grade</h2>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={jobTypeData} layout="vertical">
               <CartesianGrid strokeDasharray="3 3" />
@@ -306,50 +304,6 @@ export default function DashboardPage() {
               <YAxis dataKey="name" type="category" width={140} fontSize={11} />
               <Tooltip formatter={(value: any) => formatCurrency(value)} />
               <Bar dataKey="value" fill="#D2B48C" />
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-        {/* Chart 5: Monthly Average Payroll */}
-        <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-lg font-semibold mb-4">
-            Monthly Average Payroll By department
-          </h2>
-          <ResponsiveContainer width="100%" height={350}>
-            <BarChart data={monthlyData.data}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="month" fontSize={11} />
-              <YAxis fontSize={11} />
-              <Tooltip
-                formatter={(value: any) => formatCurrency(value)}
-                contentStyle={{ fontSize: "12px" }}
-              />
-              <Legend wrapperStyle={{ fontSize: "11px" }} />
-              {monthlyData.departments.map((dept: string, idx: number) => (
-                <Bar
-                  key={dept}
-                  dataKey={dept}
-                  stackId="a"
-                  fill={COLORS[idx % COLORS.length]}
-                />
-              ))}
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-        {/* Chart 6: Payroll By Grade */}
-        <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-lg font-semibold mb-4">
-            Payroll Summary By Grade
-          </h2>
-          <ResponsiveContainer width="100%" height={350}>
-            <BarChart data={gradeData}>
-              <CartesianGrid strokeDasharray="3 3" />
-              <XAxis dataKey="grade" fontSize={11} />
-              <YAxis fontSize={11} />
-              <Tooltip
-                formatter={(value: any) => formatCurrency(value)}
-                contentStyle={{ fontSize: "12px" }}
-              />
-              <Bar dataKey="value" fill="#8B0000" />
             </BarChart>
           </ResponsiveContainer>
         </div>

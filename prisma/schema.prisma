@@ -1,12 +1,10 @@
 generator client {
-  provider        = "prisma-client-js"
-  previewFeatures = ["fullTextSearchPostgres", "fullTextIndex"] // ✅ For better search performance
+  provider = "prisma-client-js"
 }
 
 datasource db {
-  provider  = "postgresql"
-  url       = env("DATABASE_URL") // Pooler untuk query biasa
-  directUrl = env("DATABASE_DIRECT_URL") // Direct untuk migrations & bulk insert
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
 }
 
 model User {
@@ -129,18 +127,18 @@ model EmployeeComponent {
   uploadedAt  DateTime @default(now())
   user        User     @relation("EmployeeComponentUploads", fields: [uploadedBy], references: [id], onDelete: Cascade)
 
-  // ✅ CRITICAL: Optimized indexes for 950K rows
+  // ✅ Optimized indexes for 950K rows
   @@index([employeeNo])
   @@index([bulanReport])
   @@index([uploadedBy])
   @@index([type])
   @@index([komponen])
-  // ✅ Composite indexes for common queries (MOST IMPORTANT)
-  @@index([employeeNo, komponen]) // For employee lookup
-  @@index([bulanReport, type]) // For dashboard filters
-  @@index([komponen, type]) // For chart queries
-  @@index([komponen, bulanReport, type]) // For complex filters
-  @@index([employeeNo, bulanReport]) // For deduplication queries
+  // ✅ Composite indexes for common queries
+  @@index([employeeNo, komponen])
+  @@index([bulanReport, type])
+  @@index([komponen, type])
+  @@index([komponen, bulanReport, type])
+  @@index([employeeNo, bulanReport])
   @@map("employee_components")
 }
 
