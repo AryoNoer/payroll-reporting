@@ -200,9 +200,9 @@ export default function UploadComponentsPage() {
         setProgress(null);
 
         // ✅ Cleanup: Delete uploaded file jika processing gagal
-        await storageHelpers
-          .deleteFilesAdmin(STORAGE_BUCKETS.PAYROLL_COMPONENTS, [filePath])
-          .catch((err) => console.error("Failed to cleanup file:", err));
+        // await storageHelpers
+        //   .deleteFilesAdmin(STORAGE_BUCKETS.PAYROLL_COMPONENTS, [filePath])
+        //   .catch((err) => console.error("Failed to cleanup file:", err));
 
         showModal(
           "error",
