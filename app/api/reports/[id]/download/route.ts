@@ -11,19 +11,29 @@ import { OUTPUT_FIELDS } from "@/lib/output-fields";
 import { HEADCOUNT_FIELDS } from "@/lib/headcount-fields";
 import { aggregateCostCenterData } from "@/lib/cost-center-aggregation";
 
+// ✅ Configure route for longer execution (Pro plan only)
+// If on hobby plan, this will be ignored but won't cause errors
+export const maxDuration = 60; // seconds
+export const dynamic = 'force-dynamic';
+
+// ✅ Process data in smaller batches to reduce memory usage
+const BATCH_SIZE = 2000;
 
 export async function GET(
   request: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
+  const startTime = Date.now();
+  
   try {
     const user = await requireAuth();
     const { id: reportId } = await params;
 
     console.log('\n' + '='.repeat(60));
-console.log('📊 GENERATING REPORT');
+    console.log('📊 GENERATING REPORT');
     console.log('='.repeat(60));
     console.log(`Report ID: ${reportId}`);
+    console.log(`Start time: ${new Date().toISOString()}`);
 
     // Get report
     const report = await prisma.report.findFirst({
@@ -46,31 +56,63 @@ console.log('📊 GENERATING REPORT');
     console.log(`✓ Report: ${report.name}`);
     console.log(`✓ Upload: ${report.upload.originalName}`);
 
-    // Get employees data
-    const employees = await prisma.employee.findMany({
-      where: { uploadId: report.uploadId },
-      orderBy: { employeeNo: 'asc' }
+    // ✅ Get employees count first
+    const totalCount = await prisma.employee.count({
+      where: { uploadId: report.uploadId }
     });
+    
+    console.log(`✓ Total employees: ${totalCount}`);
+
+    // ✅ OPTIMIZATION: For large datasets (>5000), fetch in batches
+    let employees: any[] = [];
+    
+    if (totalCount > 5000) {
+      console.log(`⚡ Large dataset detected, fetching in batches...`);
+      
+      const batchCount = Math.ceil(totalCount / BATCH_SIZE);
+      for (let i = 0; i < batchCount; i++) {
+        const batch = await prisma.employee.findMany({
+          where: { uploadId: report.uploadId },
+          orderBy: { employeeNo: 'asc' },
+          skip: i * BATCH_SIZE,
+          take: BATCH_SIZE,
+        });
+        employees.push(...batch);
+        
+        console.log(`  Batch ${i + 1}/${batchCount}: ${batch.length} rows`);
+        
+        // ✅ Small delay to prevent overwhelming the database
+        if (i < batchCount - 1) {
+          await new Promise(resolve => setTimeout(resolve, 100));
+        }
+      }
+      
+      console.log(`✓ Fetched all ${employees.length} employees in ${batchCount} batches`);
+    } else {
+      employees = await prisma.employee.findMany({
+        where: { uploadId: report.uploadId },
+        orderBy: { employeeNo: 'asc' }
+      });
+      console.log(`✓ Fetched ${employees.length} employees in single query`);
+    }
+
+    const fetchTime = ((Date.now() - startTime) / 1000).toFixed(2);
+    console.log(`⏱️ Fetch time: ${fetchTime}s`);
 
     // ✅ Filter by COA if Cabang Report
     let filteredEmployees = employees;
     if (report.reportType === "CABANG") {
       filteredEmployees = employees.filter((emp) => {
-        // Calculate COA from neutralData or salaryData
         const neutralData = (emp.neutralData as any) || {};
         const salaryData = (emp.salaryData as any) || {};
         const costCenter = String(neutralData['Cost Center'] || salaryData['Cost Center'] || '').toLowerCase();
-        
-        // COA = 500 means NOT "kantor pusat"
         return !costCenter.includes('kantor pusat');
       });
       
       console.log(`✓ Filtered for Cabang: ${filteredEmployees.length} employees (COA = 500)`);
     }
 
-// ... (line 1-67 tetap sama)
-    
-    console.log(`✓ Employees: ${filteredEmployees.length} rows`);
+    console.log(`✓ Processing ${filteredEmployees.length} rows`);
 
     // ✅ Handle Cost Center Report (Aggregated)
     if (report.reportType === "COST_CENTER") {
@@ -80,17 +122,17 @@ console.log('📊 GENERATING REPORT');
       
       const aggregatedData = aggregateCostCenterData(employees);
       
-      // Generate Excel
       const { generateCostCenterExcel, costCenterWorkbookToBuffer } = await import("@/lib/cost-center-excel");
       const wb = generateCostCenterExcel(aggregatedData, report.name, report.upload.period);
       const buffer = costCenterWorkbookToBuffer(wb);
       
+      const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
       console.log(`✓ Excel generated: ${(buffer.byteLength / 1024).toFixed(2)} KB`);
+      console.log(`⏱️ Total time: ${totalTime}s`);
       console.log('='.repeat(60));
       console.log('✅ COST CENTER REPORT COMPLETE');
       console.log('='.repeat(60) + '\n');
       
-      // Return file
       const sanitizedName = report.name.replace(/[^a-zA-Z0-9-_\s]/g, '_');
       return new NextResponse(new Uint8Array(buffer), {
         headers: {
@@ -100,14 +142,14 @@ console.log('📊 GENERATING REPORT');
       });
     }
 
-    // ✅ Select fields based on report type (FOR NON-COST CENTER REPORTS)
+    // ✅ Select fields based on report type
     const allFieldNames = report.reportType === "HEADCOUNT" 
-      ? [...HEADCOUNT_FIELDS]   // 25 fields for headcount
-      : OUTPUT_FIELDS;           // 301 fields for monthly report
+      ? [...HEADCOUNT_FIELDS]
+      : OUTPUT_FIELDS;
 
     console.log(`✅ Using ${report.reportType} fields: ${allFieldNames.length} fields total`);
 
-    // ✅ Handle THR Cabang Report (Custom Fields)
+    // ✅ Handle THR Cabang Report
     if (report.reportType === "THR_CABANG") {
       console.log('\n' + '='.repeat(60));
       console.log('💰 GENERATING THR CABANG REPORT');
@@ -118,10 +160,15 @@ console.log('📊 GENERATING REPORT');
       
       console.log(`✓ Using THR Cabang fields: ${thrFields.length} fields`);
       
-      // Build data rows for THR Cabang
-      const excelData = filteredEmployees.map((emp, index) => {
+      // ✅ Process rows with progress logging
+      const excelData = [];
+      const progressInterval = Math.ceil(filteredEmployees.length / 10); // Log every 10%
+      
+      for (let i = 0; i < filteredEmployees.length; i++) {
+        const emp = filteredEmployees[i];
+        
         const row: any = {
-          'No': index + 1,
+          'No': i + 1,
           'Name': emp.name,
           'Employee No': emp.employeeNo,
           'Position': emp.position,
@@ -144,8 +191,17 @@ console.log('📊 GENERATING REPORT');
           finalRow[fieldName] = processedRow[fieldName] ?? '';
         });
 
-        return finalRow;
-      });
+        excelData.push(finalRow);
+        
+        // Progress logging
+        if ((i + 1) % progressInterval === 0) {
+          const progress = Math.round(((i + 1) / filteredEmployees.length) * 100);
+          console.log(`  Progress: ${progress}% (${i + 1}/${filteredEmployees.length} rows)`);
+        }
+      }
+
+      const processTime = ((Date.now() - startTime) / 1000).toFixed(2);
+      console.log(`✓ Data processing: ${processTime}s`);
 
       const wb = generateTemplatedExcel(excelData, thrFields, {
         sheetName: 'THR Cabang',
@@ -155,7 +211,9 @@ console.log('📊 GENERATING REPORT');
 
       const buffer = workbookToBuffer(wb);
       
+      const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
       console.log(`✓ Excel generated: ${(buffer.length / 1024).toFixed(2)} KB`);
+      console.log(`⏱️ Total time: ${totalTime}s`);
       console.log('='.repeat(60) + '\n');
       
       const sanitizedName = report.name.replace(/[^a-zA-Z0-9-_\s]/g, '_');
@@ -167,15 +225,16 @@ console.log('📊 GENERATING REPORT');
       });
     }
 
-    // Build data rows
+    // ✅ Build data rows with progress tracking
     console.log('\n📋 Building data rows with ALL columns...');
-    // Build data rows
-    console.log('\n📋 Building data rows with ALL columns...');
-    const excelData = filteredEmployees.map((emp, index) => {
-      // Start with raw data object
+    const excelData = [];
+    const progressInterval = Math.ceil(filteredEmployees.length / 10);
+    
+    for (let i = 0; i < filteredEmployees.length; i++) {
+      const emp = filteredEmployees[i];
+      
       const row: any = {
-        'No': index + 1,
-        // Dedicated fields from Employee model
+        'No': i + 1,
         'Name': emp.name,
         'Employee No': emp.employeeNo,
         'Gender': emp.gender,
@@ -192,31 +251,33 @@ console.log('📊 GENERATING REPORT');
         'Tax Status': emp.taxStatus,
       };
 
-      // Merge all JSON fields into one object
       const salaryData = (emp.salaryData as any) || {};
       const allowanceData = (emp.allowanceData as any) || {};
       const deductionData = (emp.deductionData as any) || {};
       const neutralData = (emp.neutralData as any) || {};
 
-      // Merge all data
       Object.assign(row, salaryData, allowanceData, deductionData, neutralData);
-
-      // ✅ Apply calculations and derivations (including Cost Center By Function)
       const processedRow = applyCalculationsAndDerivations(row);
 
-      // ✅ Build final row with ALL OUTPUT_FIELDS (empty string if no data)
       const finalRow: any = {};
       allFieldNames.forEach(fieldName => {
-        // Use processed value if exists, otherwise empty string
         finalRow[fieldName] = processedRow[fieldName] ?? '';
       });
 
-      return finalRow;
-    });
+      excelData.push(finalRow);
+      
+      // Progress logging
+      if ((i + 1) % progressInterval === 0) {
+        const progress = Math.round(((i + 1) / filteredEmployees.length) * 100);
+        const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+        console.log(`  Progress: ${progress}% (${i + 1}/${filteredEmployees.length} rows) - ${elapsed}s elapsed`);
+      }
+    }
 
-    console.log(`✓ Data rows built: ${excelData.length} rows x ${allFieldNames.length} columns`);
+    const processTime = ((Date.now() - startTime) / 1000).toFixed(2);
+    console.log(`✓ Data rows built: ${excelData.length} rows x ${allFieldNames.length} columns in ${processTime}s`);
 
-    // Count how many fields have data vs empty
+    // Count coverage
     const sampleRow = excelData[0] || {};
     const fieldsWithData = Object.values(sampleRow).filter(v => v !== '' && v !== null && v !== 0).length;
     const emptyFields = allFieldNames.length - fieldsWithData;
@@ -226,7 +287,7 @@ console.log('📊 GENERATING REPORT');
     console.log(`  - Empty fields: ${emptyFields}`);
     console.log(`  - Coverage: ${((fieldsWithData / allFieldNames.length) * 100).toFixed(1)}%`);
 
-    // Get category summary for logging
+    // Get category summary
     const fieldCategories = categorizeFields(allFieldNames);
     const summary = getCategorySummary(allFieldNames, fieldCategories);
     
@@ -237,21 +298,36 @@ console.log('📊 GENERATING REPORT');
         console.log(`  - ${category}: ${count} fields`);
       });
 
-    // Generate Excel with 4-level hierarchical headers
+    // Generate Excel
     console.log('\n📄 Generating Excel with templated headers...');
+    const excelStartTime = Date.now();
+    
     const wb = generateTemplatedExcel(excelData, allFieldNames, {
       sheetName: 'Report',
       autoWidth: true,
       maxWidth: 50
     });
 
-    // Convert to buffer
-    const buffer = workbookToBuffer(wb);
+    const excelTime = ((Date.now() - excelStartTime) / 1000).toFixed(2);
+    console.log(`✓ Excel generation: ${excelTime}s`);
 
-    console.log(`✓ Excel generated: ${(buffer.length / 1024).toFixed(2)} KB`);
+    // Convert to buffer
+    const bufferStartTime = Date.now();
+    const buffer = workbookToBuffer(wb);
+    const bufferTime = ((Date.now() - bufferStartTime) / 1000).toFixed(2);
+    
+    const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
+    console.log(`✓ Buffer conversion: ${bufferTime}s`);
+    console.log(`✓ Excel size: ${(buffer.length / 1024).toFixed(2)} KB`);
+    console.log(`⏱️ Total time: ${totalTime}s`);
     console.log('='.repeat(60));
     console.log('✅ DOWNLOAD COMPLETE - ALL COLUMNS INCLUDED');
     console.log('='.repeat(60) + '\n');
+
+    // ✅ Check if we're approaching timeout
+    if (parseFloat(totalTime) > 8) {
+      console.warn(`⚠️ WARNING: Generation took ${totalTime}s (approaching 10s timeout limit)`);
+    }
 
     // Return file
     const sanitizedName = report.name.replace(/[^a-zA-Z0-9-_\s]/g, '_');
@@ -262,16 +338,32 @@ console.log('📊 GENERATING REPORT');
       },
     });
   } catch (error) {
+    const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
+    
     console.error('\n' + '='.repeat(60));
     console.error("❌ DOWNLOAD ERROR");
     console.error('='.repeat(60));
+    console.error(`Total time before error: ${totalTime}s`);
     console.error(error);
     console.error('='.repeat(60) + '\n');
     
+    // ✅ Better error messages
+    let errorMessage = "Failed to download report";
+    if (error instanceof Error) {
+      if (error.message.includes('timeout') || error.message.includes('ETIMEDOUT')) {
+        errorMessage = "Report generation timed out. The file is too large. Please try filtering the data or upgrade to Vercel Pro for longer timeout.";
+      } else if (error.message.includes('memory')) {
+        errorMessage = "Out of memory while generating report. Please try with a smaller dataset.";
+      } else {
+        errorMessage = error.message;
+      }
+    }
+    
     return NextResponse.json(
       { 
-        error: "Failed to download report",
-        message: error instanceof Error ? error.message : "Unknown error"
+        error: errorMessage,
+        message: error instanceof Error ? error.message : "Unknown error",
+        executionTime: `${totalTime}s`
       },
       { status: 500 }
     );
