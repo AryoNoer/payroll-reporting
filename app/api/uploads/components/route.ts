@@ -88,9 +88,9 @@ export async function POST(request: NextRequest) {
 
     const startTime = Date.now();
 
-    // ✅ NEW: Download file dari Supabase Storage
+    // ✅ FIXED: Use downloadFileAdmin instead of downloadFile
     console.log(`[Upload Components] Downloading file from storage...`);
-    const { data: fileBlob, error: downloadError } = await storageHelpers.downloadFile(
+    const { data: fileBlob, error: downloadError } = await storageHelpers.downloadFileAdmin(
       STORAGE_BUCKETS.PAYROLL_COMPONENTS,
       uploadedPath
     );
@@ -222,7 +222,7 @@ export async function POST(request: NextRequest) {
 
     // ✅ Optional: Delete file from storage after successful processing
     // Uncomment jika ingin auto-delete setelah berhasil
-    // await storageHelpers.deleteFiles(STORAGE_BUCKETS.PAYROLL_COMPONENTS, [filePath]);
+    // await storageHelpers.deleteFilesAdmin(STORAGE_BUCKETS.PAYROLL_COMPONENTS, [filePath]);
     // console.log(`[Upload Components] 🗑️ Cleaned up storage file: ${filePath}`);
 
     return NextResponse.json({
@@ -243,10 +243,10 @@ export async function POST(request: NextRequest) {
   } catch (error) {
     console.error("[Upload Components] Error:", error);
     
-    // ✅ Cleanup: Delete uploaded file jika processing gagal
+    // ✅ FIXED: Use deleteFilesAdmin instead of deleteFiles
     if (filePath) {
       console.log(`[Upload Components] 🗑️ Cleaning up failed upload: ${filePath}`);
-      await storageHelpers.deleteFiles(
+      await storageHelpers.deleteFilesAdmin(
         STORAGE_BUCKETS.PAYROLL_COMPONENTS,
         [filePath]
       ).catch(err => console.error("Cleanup error:", err));
