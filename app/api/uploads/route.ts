@@ -23,7 +23,7 @@ const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
   },
 });
 
-const STORAGE_BUCKET = 'payroll-components';
+const STORAGE_BUCKET = 'payroll-uploads';
 
 // Error logger helper
 class UploadError extends Error {

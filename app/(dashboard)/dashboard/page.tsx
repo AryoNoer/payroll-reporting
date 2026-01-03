@@ -1,6 +1,5 @@
 // app/(dashboard)/dashboard/page.tsx
 /* eslint-disable @typescript-eslint/no-explicit-any */
-// app/(dashboard)/dashboard/page.tsx
 "use client";
 
 import { useSession } from "next-auth/react";
@@ -17,7 +16,8 @@ import {
   Tooltip,
   Legend,
   ResponsiveContainer,
-  Treemap,
+  LineChart,
+  Line,
 } from "recharts";
 
 interface PayrollStats {
@@ -28,7 +28,14 @@ interface PayrollStats {
   minSalary: number;
 }
 
-const COLORS = ["#8B0000", "#4682B4", "#D2B48C"];
+const COLORS = [
+  "#8B0000",
+  "#4682B4",
+  "#D2B48C",
+  "#FF6B6B",
+  "#4ECDC4",
+  "#45B7D1",
+];
 
 export default function DashboardPage() {
   const { data: session } = useSession();
@@ -39,17 +46,18 @@ export default function DashboardPage() {
   // State for all data
   const [stats, setStats] = useState<PayrollStats | null>(null);
   const [deptData, setDeptData] = useState<any[]>([]);
-  const [salaryRangeData, setSalaryRangeData] = useState<any>({
-    data: [],
-    ranges: [],
+  const [avgSalaryData, setAvgSalaryData] = useState<any>({
+    current: [],
+    previous: [],
   });
-  const [elementsData, setElementsData] = useState<any[]>([]);
+  const [elementsData, setElementsData] = useState<any>({
+    current: [],
+    previous: [],
+  });
   const [jobTypeData, setJobTypeData] = useState<any[]>([]);
-  const [monthlyData, setMonthlyData] = useState<any>({
-    data: [],
-    departments: [],
-  });
-  const [gradeData, setGradeData] = useState<any[]>([]);
+  const [trendData, setTrendData] = useState<any[]>([]);
+  const [ageData, setAgeData] = useState<any[]>([]);
+  const [losData, setLosData] = useState<any[]>([]);
 
   // Fetch all data
   useEffect(() => {
@@ -66,26 +74,23 @@ export default function DashboardPage() {
       const [
         statsRes,
         deptRes,
-        rangeRes,
+        avgSalaryRes,
         elemRes,
         jobRes,
-        monthlyRes,
-        gradeRes,
+        trendRes,
+        ageRes,
+        losRes,
       ] = await Promise.all([
         fetch(`/api/dashboard/payroll-stats?${params}`),
         fetch(`/api/dashboard/payroll-by-department?${params}`),
-        fetch(`/api/dashboard/employees-by-salary-range?${params}`),
+        fetch(`/api/dashboard/average-net-salary?${params}`),
         fetch(`/api/dashboard/payroll-elements?${params}`),
         fetch(`/api/dashboard/payroll-by-job-type?${params}`),
-        fetch(
-          `/api/dashboard/monthly-payroll-by-dept?year=${
-            selectedYear !== "(All)" ? selectedYear : ""
-          }`
-        ),
-        fetch(`/api/dashboard/payroll-by-grade?${params}`),
+        fetch(`/api/dashboard/net-salary-trend?${params}`),
+        fetch(`/api/dashboard/employee-age?${params}`),
+        fetch(`/api/dashboard/length-of-service?${params}`),
       ]);
 
-      // ✅ Helper function untuk parse JSON dengan fallback
       const parseJson = async (res: Response, fallback: any) => {
         try {
           if (!res.ok) {
@@ -106,13 +111,14 @@ export default function DashboardPage() {
 
       setStats(await parseJson(statsRes, null));
       setDeptData(await parseJson(deptRes, []));
-      setSalaryRangeData(await parseJson(rangeRes, { data: [], ranges: [] }));
-      setElementsData(await parseJson(elemRes, []));
-      setJobTypeData(await parseJson(jobRes, []));
-      setMonthlyData(
-        await parseJson(monthlyRes, { data: [], departments: [] })
+      setAvgSalaryData(
+        await parseJson(avgSalaryRes, { current: [], previous: [] })
       );
-      setGradeData(await parseJson(gradeRes, []));
+      setElementsData(await parseJson(elemRes, { current: [], previous: [] }));
+      setJobTypeData(await parseJson(jobRes, []));
+      setTrendData(await parseJson(trendRes, []));
+      setAgeData(await parseJson(ageRes, []));
+      setLosData(await parseJson(losRes, []));
     } catch (error) {
       console.error("Error fetching dashboard data:", error);
     } finally {
@@ -244,11 +250,22 @@ export default function DashboardPage() {
           </ResponsiveContainer>
         </div>
 
-        {/* Chart 2: Employees By Salary Range */}
+        {/* Chart 2: Average Net Salary - Current vs Previous */}
         <div className="bg-white rounded-lg shadow p-6">
           <h2 className="text-lg font-semibold mb-4">Average Net Salary</h2>
           <ResponsiveContainer width="100%" height={350}>
-            <BarChart data={salaryRangeData.data}>
+            <BarChart
+              data={[
+                ...avgSalaryData.current.map((item: any) => ({
+                  ...item,
+                  period: "Current",
+                })),
+                ...avgSalaryData.previous.map((item: any) => ({
+                  ...item,
+                  period: "Previous",
+                })),
+              ]}
+            >
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis
                 dataKey="department"
@@ -258,27 +275,23 @@ export default function DashboardPage() {
                 fontSize={11}
               />
               <YAxis fontSize={11} />
-              <Tooltip contentStyle={{ fontSize: "12px" }} />
-              {/* <Legend wrapperStyle={{ fontSize: "11px", paddingTop: "10px" }} /> */}
-              {salaryRangeData.ranges.map((range: any, idx: number) => (
-                <Bar
-                  key={range.key}
-                  dataKey={range.key}
-                  stackId="a"
-                  fill={COLORS[idx]}
-                />
-              ))}
+              <Tooltip
+                formatter={(value: any) => formatCurrency(value)}
+                contentStyle={{ fontSize: "12px" }}
+              />
+              <Legend wrapperStyle={{ fontSize: "11px", paddingTop: "10px" }} />
+              <Bar dataKey="avgSalary" fill="#8B0000" name="Avg Salary" />
             </BarChart>
           </ResponsiveContainer>
         </div>
 
-        {/* Chart 3: Payroll Elements */}
+        {/* Chart 3: Payroll Elements - Top 10 Allowance */}
         <div className="bg-white rounded-lg shadow p-6">
           <h2 className="text-lg font-semibold mb-4">
-            Payroll Elements Details
+            Payroll Elements Details (Top 10)
           </h2>
           <ResponsiveContainer width="100%" height={350}>
-            <BarChart data={elementsData} layout="vertical">
+            <BarChart data={elementsData.current} layout="vertical">
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis type="number" fontSize={11} />
               <YAxis dataKey="name" type="category" width={140} fontSize={11} />
@@ -286,24 +299,92 @@ export default function DashboardPage() {
                 formatter={(value: any) => formatCurrency(value)}
                 contentStyle={{ fontSize: "12px" }}
               />
-              <Bar dataKey="value" fill="#8B0000" />
+              <Legend wrapperStyle={{ fontSize: "11px" }} />
+              <Bar dataKey="value" fill="#8B0000" name="Current" />
+              <Bar dataKey="previousValue" fill="#D2B48C" name="Previous" />
             </BarChart>
           </ResponsiveContainer>
         </div>
       </div>
 
-      {/* Second Row: 3 Charts */}
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-        {/* Chart 4: Payroll By Job Type */}
+      {/* Second Row: Job Type & Trend */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        {/* Chart 4: Payroll By Job Type (from Grade) */}
         <div className="bg-white rounded-lg shadow p-6">
-          <h2 className="text-lg font-semibold mb-4">Grade</h2>
+          <h2 className="text-lg font-semibold mb-4">
+            Payroll Summary By Job Type
+          </h2>
           <ResponsiveContainer width="100%" height={300}>
             <BarChart data={jobTypeData} layout="vertical">
               <CartesianGrid strokeDasharray="3 3" />
               <XAxis type="number" />
               <YAxis dataKey="name" type="category" width={140} fontSize={11} />
               <Tooltip formatter={(value: any) => formatCurrency(value)} />
-              <Bar dataKey="value" fill="#D2B48C" />
+              <Bar dataKey="value" fill="#4682B4" />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* Chart 5: Net Salary Trend (Line Chart) */}
+        <div className="bg-white rounded-lg shadow p-6">
+          <h2 className="text-lg font-semibold mb-4">
+            Trend Net Salary Per Month
+          </h2>
+          <ResponsiveContainer width="100%" height={300}>
+            <LineChart data={trendData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="month" fontSize={11} />
+              <YAxis fontSize={11} />
+              <Tooltip
+                formatter={(value: any) => formatCurrency(value)}
+                contentStyle={{ fontSize: "12px" }}
+              />
+              <Legend wrapperStyle={{ fontSize: "11px" }} />
+              <Line
+                type="monotone"
+                dataKey="totalSalary"
+                stroke="#8B0000"
+                strokeWidth={2}
+                name="Total Net Salary"
+              />
+            </LineChart>
+          </ResponsiveContainer>
+        </div>
+      </div>
+
+      {/* Third Row: Age & Length of Service */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+        {/* Chart 6: Employee Age Distribution */}
+        <div className="bg-white rounded-lg shadow p-6">
+          <h2 className="text-lg font-semibold mb-4">
+            Employee Age Distribution
+          </h2>
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={ageData}>
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis dataKey="ageRange" fontSize={11} />
+              <YAxis fontSize={11} />
+              <Tooltip contentStyle={{ fontSize: "12px" }} />
+              <Bar dataKey="count" fill="#FF6B6B" name="Employees" />
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+
+        {/* Chart 7: Length of Service */}
+        <div className="bg-white rounded-lg shadow p-6">
+          <h2 className="text-lg font-semibold mb-4">Length of Service</h2>
+          <ResponsiveContainer width="100%" height={300}>
+            <BarChart data={losData} layout="vertical">
+              <CartesianGrid strokeDasharray="3 3" />
+              <XAxis type="number" fontSize={11} />
+              <YAxis
+                dataKey="range"
+                type="category"
+                width={100}
+                fontSize={11}
+              />
+              <Tooltip contentStyle={{ fontSize: "12px" }} />
+              <Bar dataKey="count" fill="#4ECDC4" name="Employees" />
             </BarChart>
           </ResponsiveContainer>
         </div>

@@ -199,37 +199,13 @@ export default function UploadComponentsPage() {
       if (!response.ok) {
         setProgress(null);
 
-        // ✅ Cleanup: Delete uploaded file jika processing gagal
-        // ✅ GANTI DENGAN INI:
-        if (!response.ok) {
-          // Storage cleanup handled by backend automatically
-          // No manual cleanup needed here
-
-          const data = await response.json();
-
-          if (data.code === "DUPLICATE_IN_FILE") {
-            showModal(
-              "error",
-              "Duplicate Employees Found",
-              data.error,
-              data.details
-            );
-          } else {
-            showModal(
-              "error",
-              "Upload Failed",
-              data.error || "Failed to upload file",
-              data.details
-            );
-          }
-
-          setError({
-            message: data.error || "Upload failed",
-            code: data.code,
-            details: data.details,
-          });
-          return;
-        }
+        showModal(
+          "error",
+          "Upload Failed",
+          data.error || "Failed to upload file",
+          data.details
+        );
+        return;
       }
 
       // ✅ Show completion
@@ -714,7 +690,4 @@ export default function UploadComponentsPage() {
       </div>
     </div>
   );
-}
-function setError(arg0: { message: any; code: any; details: any }) {
-  throw new Error("Function not implemented.");
 }
