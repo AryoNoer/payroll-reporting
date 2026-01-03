@@ -245,6 +245,26 @@ export default function UploadsPage() {
         body: formData, // Send FormData directly
       });
 
+      // ✅ TAMBAHKAN: Cek jika response bukan JSON
+      const contentType = response.headers.get("content-type");
+      if (!contentType || !contentType.includes("application/json")) {
+        const text = await response.text();
+        console.error("Non-JSON response:", text);
+
+        showModal(
+          "error",
+          "Upload Failed",
+          `Server returned an error: ${response.status} ${response.statusText}`,
+          { responseText: text }
+        );
+
+        setError({
+          message: `Server error: ${response.status} ${response.statusText}`,
+          code: `HTTP_${response.status}`,
+        });
+        return;
+      }
+
       const data = await response.json();
 
       if (!response.ok) {
