@@ -157,107 +157,81 @@ export default function UploadComponentsPage() {
         throw new Error(`Upload failed: ${uploadError}`);
       }
 
-      // Step 2: Process with SSE for real-time progress
-      const response = await fetch("/api/uploads/components", {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-        },
+      // Step 2: Prepare - Get total chunks
+      setProgress({
+        phase: "preparing",
+        message: "Analyzing file...",
+        percentage: 15,
+      });
+
+      const prepareResponse = await fetch("/api/uploads/components", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           fileUrl,
           filePath,
           fileName: file.name,
           fileSize: file.size,
           type: selectedType,
+          action: "prepare",
         }),
       });
 
-      if (!response.ok) {
-        throw new Error(`Server error: ${response.status}`);
+      if (!prepareResponse.ok) {
+        throw new Error("Failed to prepare file");
       }
 
-      const reader = response.body?.getReader();
-      const decoder = new TextDecoder();
+      const { totalChunks, totalRows } = await prepareResponse.json();
 
-      if (!reader) {
-        throw new Error("No response stream");
-      }
+      // Step 3: Process chunks sequentially
+      let totalInserted = 0;
 
-      let finalResult: any = null;
-      let buffer = ""; // ✅ Buffer for incomplete chunks
+      for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
+        const chunkProgress = 20 + Math.round((chunkIndex / totalChunks) * 75);
 
-      // Read stream
-      while (true) {
-        const { done, value } = await reader.read();
-        if (done) break;
+        setProgress({
+          phase: "processing",
+          message: `Processing batch ${
+            chunkIndex + 1
+          }/${totalChunks} • ${totalInserted.toLocaleString()} rows inserted`,
+          percentage: chunkProgress,
+        });
 
-        const chunk = decoder.decode(value, { stream: true });
-        buffer += chunk; // ✅ Accumulate chunks
+        const processResponse = await fetch("/api/uploads/components", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            fileUrl,
+            filePath,
+            fileName: file.name,
+            fileSize: file.size,
+            type: selectedType,
+            action: "process",
+            chunkIndex,
+          }),
+        });
 
-        // ✅ Process complete lines
-        const lines = buffer.split("\n");
-        buffer = lines.pop() || ""; // Keep incomplete line in buffer
-
-        for (const line of lines) {
-          if (!line.trim()) continue;
-
-          if (line.startsWith("data: ")) {
-            try {
-              const data = JSON.parse(line.slice(6));
-
-              // ✅ Handle error
-              if (data.error || data.phase === "error") {
-                throw new Error(data.error || "Upload failed");
-              }
-
-              // ✅ Update progress
-              if (data.phase) {
-                setProgress({
-                  phase: data.phase,
-                  message: data.message,
-                  percentage: data.percentage,
-                });
-              }
-
-              // ✅ Capture final result (has success flag)
-              if (data.success === true && data.count !== undefined) {
-                finalResult = data;
-                console.log("✅ Final result received:", finalResult);
-              }
-            } catch (parseError) {
-              console.error("Failed to parse SSE data:", line, parseError);
-            }
-          }
+        if (!processResponse.ok) {
+          console.error(`Chunk ${chunkIndex + 1} failed, continuing...`);
+          continue; // Continue with next chunk instead of failing
         }
+
+        const { inserted } = await processResponse.json();
+        totalInserted += inserted;
       }
 
-      // ✅ Process remaining buffer
-      if (buffer.trim() && buffer.startsWith("data: ")) {
-        try {
-          const data = JSON.parse(buffer.slice(6));
-          if (data.success === true && data.count !== undefined) {
-            finalResult = data;
-            console.log("✅ Final result from buffer:", finalResult);
-          }
-        } catch (e) {
-          console.error("Failed to parse final buffer:", e);
-        }
-      }
-
-      // ✅ Better error handling if no result
-      if (!finalResult) {
-        console.error("❌ No final result received from server");
-        throw new Error(
-          "Upload completed but no result received. Please check server logs."
-        );
-      }
+      setProgress({
+        phase: "completed",
+        message: "Upload completed!",
+        percentage: 100,
+      });
 
       // Show success modal
       showModal(
         "success",
         "File Uploaded Successfully! 🎉",
-        `Successfully processed ${finalResult.count.toLocaleString()}/${finalResult.total.toLocaleString()} rows`,
-        finalResult,
+        `Successfully processed ${totalInserted.toLocaleString()}/${totalRows.toLocaleString()} rows`,
+        { totalInserted, totalRows, chunks: totalChunks },
         () => {
           setFile(null);
           setProgress(null);
