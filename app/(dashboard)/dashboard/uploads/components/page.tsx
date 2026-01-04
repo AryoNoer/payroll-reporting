@@ -135,7 +135,7 @@ export default function UploadComponentsPage() {
     });
 
     try {
-      // ✅ STEP 1: Upload file langsung ke Supabase Storage
+      // Step 1: Upload to storage
       setProgress({
         phase: "uploading",
         message: "Uploading file to cloud storage...",
@@ -157,19 +157,9 @@ export default function UploadComponentsPage() {
         throw new Error(`Upload failed: ${uploadError}`);
       }
 
-      console.log(`✅ File uploaded to Storage:`, filePath);
-
-      // ✅ STEP 2: Kirim metadata ke API untuk diproses
-      setProgress({
-        phase: "uploading",
-        message: "File uploaded, processing data...",
-        percentage: 30,
-      });
-
-      const startTime = Date.now();
-
+      // Step 2: Process with SSE for real-time progress
       const response = await fetch("/api/uploads/components", {
-        method: "POST",
+        method: "PUT", // Use PUT for streaming
         headers: {
           "Content-Type": "application/json",
         },
@@ -182,67 +172,60 @@ export default function UploadComponentsPage() {
         }),
       });
 
-      const data = await response.json();
-
-      // ✅ Show processing phase
-      setProgress({
-        phase: "processing",
-        message: "Processing data in chunks...",
-        percentage: 70,
-      });
-
-      // ✅ Small delay to show processing phase
-      await new Promise((resolve) => setTimeout(resolve, 500));
-
-      const uploadTime = ((Date.now() - startTime) / 1000).toFixed(1);
-
       if (!response.ok) {
-        setProgress(null);
-
-        showModal(
-          "error",
-          "Upload Failed",
-          data.error || "Failed to upload file",
-          data.details
-        );
-        return;
+        throw new Error("Failed to process file");
       }
 
-      // ✅ Show completion
-      setProgress({
-        phase: "completed",
-        message: "Upload completed successfully!",
-        percentage: 100,
-      });
+      const reader = response.body?.getReader();
+      const decoder = new TextDecoder();
 
-      // ✅ Enhanced success message with performance stats
-      const performanceInfo = data.performance
-        ? `\n\nPerformance:\n• Total Time: ${
-            data.performance.totalTime
-          }\n• Speed: ${data.performance.rowsPerSecond.toLocaleString()} rows/sec\n• Chunks: ${
-            data.performance.chunks
-          }`
-        : `\n\nCompleted in ${uploadTime}s`;
+      if (!reader) {
+        throw new Error("No response stream");
+      }
 
-      const skipInfo =
-        data.skipped > 0
-          ? `\n• Skipped (duplicates): ${data.skipped.toLocaleString()}`
-          : "";
+      let finalResult: any = null;
 
+      // Read stream
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split("\n");
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const data = JSON.parse(line.slice(6));
+
+            if (data.error) {
+              throw new Error(data.error);
+            }
+
+            if (data.phase) {
+              setProgress({
+                phase: data.phase,
+                message: data.message,
+                percentage: data.percentage,
+              });
+            }
+
+            if (data.success) {
+              finalResult = data;
+            }
+          }
+        }
+      }
+
+      if (!finalResult) {
+        throw new Error("Upload completed but no result received");
+      }
+
+      // Show success modal
       showModal(
         "success",
         "File Uploaded Successfully! 🎉",
-        `Your ${selectedType} file "${file.name}" has been processed successfully.\n\n` +
-          `📊 Results:\n` +
-          `• Total rows: ${
-            data.total?.toLocaleString() || data.count.toLocaleString()
-          }\n` +
-          `• Successfully inserted: ${data.count.toLocaleString()}${skipInfo}\n` +
-          `• Type: ${
-            selectedType === "HO" ? "Head Office" : "Operating Site"
-          }` +
-          performanceInfo,
-        data.performance,
+        `Successfully processed ${finalResult.count.toLocaleString()}/${finalResult.total.toLocaleString()} rows`,
+        finalResult,
         () => {
           setFile(null);
           setProgress(null);
@@ -253,10 +236,8 @@ export default function UploadComponentsPage() {
       setProgress(null);
       showModal(
         "error",
-        "Network Error",
-        err instanceof Error
-          ? err.message
-          : "Failed to connect to the server. Please check your connection and try again.\n\nFor very large files (500K+ rows), please ensure:\n• Stable internet connection\n• Sufficient browser memory\n• Server has enough resources"
+        "Upload Failed",
+        err instanceof Error ? err.message : "An error occurred"
       );
       console.error(err);
     } finally {

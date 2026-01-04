@@ -303,3 +303,105 @@ export async function GET(_request: NextRequest) {
     );
   }
 }
+
+// Add this new endpoint for real-time progress
+export async function PUT(request: NextRequest) {
+  const encoder = new TextEncoder();
+  
+  const stream = new ReadableStream({
+    async start(controller) {
+      try {
+        const user = await requireAuth();
+        const body = await request.json();
+        const { fileUrl, filePath: uploadedPath, fileName, fileSize, type } = body;
+
+        // Send progress updates
+        const sendProgress = (phase: string, message: string, percentage: number) => {
+          const data = JSON.stringify({ phase, message, percentage });
+          controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+        };
+
+        sendProgress('preparing', 'Downloading file from storage...', 5);
+
+        // Download file
+        const { data: fileBlob } = await storageHelpers.downloadFileAdmin(
+          STORAGE_BUCKETS.PAYROLL_COMPONENTS,
+          uploadedPath
+        );
+
+        sendProgress('preparing', 'Parsing file data...', 15);
+
+        const arrayBuffer = await fileBlob!.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+
+        // Parse file (sama seperti POST)
+        const rows: any[] = [];
+        // ... parsing code ...
+
+        sendProgress('processing', 'Validating data...', 25);
+
+        const validRows = rows.filter(row => {
+          const employeeNo = String(row["Employee No"] || "").trim();
+          const komponen = String(row["Komponen"] || "").trim();
+          const bulanReport = String(row["Bulan Report"] || "").trim();
+          return employeeNo && komponen && bulanReport;
+        });
+        const componentsData = validRows.map((row) => ({
+          employeeNo: String(row["Employee No"]).trim(),
+          komponen: String(row["Komponen"]).trim(),
+          nilai: String(row["Nilai"] || "").trim(),
+          remark: row["Remark"] ? String(row["Remark"]).trim() : null,
+          remark2: row["Remark2"] ? String(row["Remark2"]).trim() : null,
+          remark3: row["Remark3"] ? String(row["Remark3"]).trim() : null,
+          bulanReport: String(row["Bulan Report"]).trim(),
+          type: type,
+          uploadedBy: user.id,
+        }));
+
+        const totalChunks = Math.ceil(componentsData.length / CHUNK_SIZE);
+        let totalInserted = 0;
+
+        // Process chunks with progress updates
+        for (let i = 0; i < componentsData.length; i += CHUNK_SIZE) {
+          const chunk = componentsData.slice(i, i + CHUNK_SIZE);
+          const chunkNumber = Math.floor(i / CHUNK_SIZE) + 1;
+
+          const result = await insertWithRetry(chunk);
+          totalInserted += result.count;
+
+          // Calculate progress (25% to 95%)
+          const progressPercent = 25 + Math.round((chunkNumber / totalChunks) * 70);
+          
+          sendProgress(
+            'processing',
+            `Processing chunk ${chunkNumber}/${totalChunks}... (${totalInserted}/${componentsData.length} rows)`,
+            progressPercent
+          );
+        }
+
+        sendProgress('completed', 'Upload completed!', 100);
+
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+          success: true,
+          count: totalInserted,
+          total: componentsData.length
+        })}\n\n`));
+
+        controller.close();
+      } catch (error) {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+          error: error instanceof Error ? error.message : 'Upload failed'
+        })}\n\n`));
+        controller.close();
+      }
+    }
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      'Connection': 'keep-alive',
+    },
+  });
+}
