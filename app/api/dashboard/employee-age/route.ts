@@ -7,7 +7,7 @@ import { prisma } from '@/lib/prisma';
 
 // Caching
 const ageCache = new Map<string, { data: any; timestamp: number }>();
-const AGE_CACHE_DURATION = 10 * 60 * 1000; // 10 minutes (age data changes less frequently)
+const AGE_CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
 
 function getAgeCacheKey(year: string | null, month: string | null): string {
   return `age-${year || 'all'}-${month || 'all'}`;
@@ -22,10 +22,28 @@ function getMonthName(monthNum: string): string {
 function calculateAge(birthDate: string): number {
   try {
     const cleanedDate = birthDate.trim();
+    console.log('Calculating age for:', cleanedDate); // Debug log
+    
     let date: Date;
     
-    if (cleanedDate.includes('/') || cleanedDate.includes('-')) {
-      const parts = cleanedDate.split(/[/-]/);
+    // Handle format: "1995-11-22 00:00:00" or "1995-11-22"
+    if (cleanedDate.includes('-')) {
+      // Split by space first to remove time part
+      const datePart = cleanedDate.split(' ')[0];
+      const parts = datePart.split('-');
+      
+      if (parts.length === 3) {
+        const year = parseInt(parts[0]);
+        const month = parseInt(parts[1]) - 1; // Month is 0-indexed
+        const day = parseInt(parts[2]);
+        date = new Date(year, month, day);
+      } else {
+        date = new Date(cleanedDate);
+      }
+    } 
+    // Handle format: "22/11/1995" or "22-11-1995"
+    else if (cleanedDate.includes('/')) {
+      const parts = cleanedDate.split('/');
       if (parts.length === 3) {
         const day = parseInt(parts[0]);
         const month = parseInt(parts[1]) - 1;
@@ -34,11 +52,15 @@ function calculateAge(birthDate: string): number {
       } else {
         date = new Date(cleanedDate);
       }
-    } else {
+    } 
+    else {
       date = new Date(cleanedDate);
     }
     
-    if (isNaN(date.getTime())) return 0;
+    if (isNaN(date.getTime())) {
+      console.log('Invalid date:', cleanedDate);
+      return 0;
+    }
     
     const today = new Date();
     let age = today.getFullYear() - date.getFullYear();
@@ -48,10 +70,16 @@ function calculateAge(birthDate: string): number {
       age--;
     }
     
-    if (age < 18 || age > 100) return 0;
+    // Validate age range (18-100)
+    if (age < 18 || age > 100) {
+      console.log('Age out of range:', age, 'for date:', cleanedDate);
+      return 0;
+    }
     
+    console.log('Calculated age:', age); // Debug log
     return age;
-  } catch {
+  } catch (error) {
+    console.error('Error calculating age:', error);
     return 0;
   }
 }
@@ -105,6 +133,7 @@ export async function GET(request: Request) {
     }
 
     console.time('Query-Age');
+    console.log('WHERE condition:', JSON.stringify(whereCondition, null, 2));
     
     const birthDates = await prisma.employeeComponent.findMany({
       where: whereCondition,
@@ -116,11 +145,15 @@ export async function GET(request: Request) {
     });
     
     console.timeEnd('Query-Age');
+    console.log('Total birth date records fetched:', birthDates.length);
 
     const ageRangeMap = new Map<string, number>();
     const ageRanges = ['< 25', '25-29', '30-34', '35-39', '40-44', '45-49', '50-54', '55-59', '60+'];
     
     ageRanges.forEach(range => ageRangeMap.set(range, 0));
+
+    let processedCount = 0;
+    let skippedCount = 0;
 
     birthDates.forEach(item => {
       if (item.remark && item.remark.trim() !== '') {
@@ -128,9 +161,17 @@ export async function GET(request: Request) {
         if (age > 0) {
           const range = getAgeRange(age);
           ageRangeMap.set(range, (ageRangeMap.get(range) || 0) + 1);
+          processedCount++;
+        } else {
+          skippedCount++;
         }
+      } else {
+        skippedCount++;
       }
     });
+
+    console.log('Processed:', processedCount, 'Skipped:', skippedCount);
+    console.log('Age range distribution:', Object.fromEntries(ageRangeMap));
 
     const result = ageRanges.map(range => ({
       ageRange: range,

@@ -22,15 +22,33 @@ function getMonthName(monthNum: string): string {
 function parseServiceYears(serviceString: string): number {
   try {
     const cleaned = serviceString.trim().toLowerCase();
-    const match = cleaned.match(/(\d+\.?\d*)/);
-    if (match) {
-      const years = parseFloat(match[1]);
-      if (years >= 0 && years <= 60) {
-        return years;
-      }
+    console.log('Parsing:', cleaned); // Debug log
+    
+    // Handle format: "10 year 7 month" or "6 year 2 month"
+    const yearMatch = cleaned.match(/(\d+)\s*year/);
+    const monthMatch = cleaned.match(/(\d+)\s*month/);
+    
+    let totalYears = 0;
+    
+    if (yearMatch) {
+      totalYears += parseInt(yearMatch[1]);
     }
+    
+    if (monthMatch) {
+      const months = parseInt(monthMatch[1]);
+      totalYears += months / 12; // Convert months to years
+    }
+    
+    // Validate range
+    if (totalYears >= 0 && totalYears <= 60) {
+      console.log('Parsed years:', totalYears); // Debug log
+      return totalYears;
+    }
+    
+    console.log('Years out of range:', totalYears); // Debug log
     return 0;
-  } catch {
+  } catch (error) {
+    console.error('Error parsing service years:', error);
     return 0;
   }
 }
@@ -82,6 +100,7 @@ export async function GET(request: Request) {
     }
 
     console.time('Query-LOS');
+    console.log('WHERE condition:', JSON.stringify(whereCondition, null, 2));
     
     const serviceData = await prisma.employeeComponent.findMany({
       where: whereCondition,
@@ -93,11 +112,15 @@ export async function GET(request: Request) {
     });
     
     console.timeEnd('Query-LOS');
+    console.log('Total records fetched:', serviceData.length);
 
     const serviceRangeMap = new Map<string, number>();
     const serviceRanges = ['< 1 year', '1-2 years', '3-4 years', '5-9 years', '10-14 years', '15-19 years', '20+ years'];
     
     serviceRanges.forEach(range => serviceRangeMap.set(range, 0));
+
+    let processedCount = 0;
+    let skippedCount = 0;
 
     serviceData.forEach(item => {
       if (item.remark && item.remark.trim() !== '') {
@@ -105,9 +128,17 @@ export async function GET(request: Request) {
         if (years >= 0) {
           const range = getServiceRange(years);
           serviceRangeMap.set(range, (serviceRangeMap.get(range) || 0) + 1);
+          processedCount++;
+        } else {
+          skippedCount++;
         }
+      } else {
+        skippedCount++;
       }
     });
+
+    console.log('Processed:', processedCount, 'Skipped:', skippedCount);
+    console.log('Range distribution:', Object.fromEntries(serviceRangeMap));
 
     const result = serviceRanges.map(range => ({
       range,
