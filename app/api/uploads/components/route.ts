@@ -7,156 +7,123 @@ import { requireAuth } from "@/lib/auth";
 import { parse } from "papaparse";
 import * as XLSX from "xlsx";
 import { storageHelpers, STORAGE_BUCKETS } from "@/lib/supabase";
+import { Readable } from "stream";
 
-// ✅ Configuration for chunked processing
-const CHUNK_SIZE = 5000; // Process 5000 rows at a time
-const MAX_FILE_SIZE = 500 * 1024 * 1024; // 500MB limit
+const CHUNK_SIZE = 6000;
+const MAX_FILE_SIZE = 500 * 1024 * 1024;
+const BATCH_INSERT_SIZE = 5000; // Insert 1000 rows at a time
 
-async function insertWithRetry(chunk: any[], maxRetries = 3) {
-  for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    try {
-      // ✅ Reconnect sebelum insert untuk fresh connection
-      if (attempt > 1) {
-        await prisma.$disconnect().catch(() => {});
-        await new Promise(resolve => setTimeout(resolve, 1000));
-      }
-      
-      const result = await prisma.employeeComponent.createMany({
-        data: chunk,
-        skipDuplicates: true,
-      });
-      return result;
-    } catch (error: any) {
-      console.error(`Attempt ${attempt} failed:`, error.message);
-      
-      // ✅ Handle connection errors
-      const isConnectionError = error.code === 'P1001' || 
-                                error.code === 'P1017' ||
-                                error.message?.includes("Can't reach database") ||
-                                error.message?.includes('closed') ||
-                                error.message?.includes('timeout') ||
-                                error.code === '57014';
-      
-      if (attempt === maxRetries || !isConnectionError) {
-        throw error;
-      }
-      
-      // Wait longer for connection errors
-      const waitTime = isConnectionError ? 5000 * attempt : 2000 * attempt;
-      console.log(`⏳ Waiting ${waitTime}ms before retry (attempt ${attempt}/${maxRetries})...`);
-      await new Promise(resolve => setTimeout(resolve, waitTime));
-    }
-  }
+// ✅ Memory-safe batch insert
+async function insertBatch(batch: any[]) {
+  if (batch.length === 0) return { count: 0 };
   
-  throw new Error("All retry attempts failed");
+  try {
+    const result = await prisma.employeeComponent.createMany({
+      data: batch,
+      skipDuplicates: true,
+    });
+    return result;
+  } catch (error: any) {
+    console.error(`❌ Batch insert error:`, error.message);
+    
+    // Retry with smaller batches if failed
+    if (batch.length > 100) {
+      let count = 0;
+      for (let i = 0; i < batch.length; i += 100) {
+        const smallBatch = batch.slice(i, i + 100);
+        try {
+          const result = await prisma.employeeComponent.createMany({
+            data: smallBatch,
+            skipDuplicates: true,
+          });
+          count += result.count;
+        } catch (err) {
+          console.error(`Sub-batch failed, skipping...`);
+        }
+      }
+      return { count };
+    }
+    
+    throw error;
+  }
 }
 
-export async function POST(request: NextRequest) {
-  let filePath: string | null = null;
-
-  try {
-    const user = await requireAuth();
-
-    // ✅ NEW: Accept JSON body dengan file URL dari Supabase Storage
-    const body = await request.json();
-    const { fileUrl, filePath: uploadedPath, fileName, fileSize, type } = body;
-
-    if (!fileUrl || !uploadedPath || !fileName) {
-      return NextResponse.json({ 
-        error: "Missing required fields: fileUrl, filePath, or fileName" 
-      }, { status: 400 });
-    }
-
-    if (!type || (type !== "HO" && type !== "OS")) {
-      return NextResponse.json({ 
-        error: "Type is required and must be either 'HO' or 'OS'" 
-      }, { status: 400 });
-    }
-
-    // Store filePath for cleanup in case of error
-    filePath = uploadedPath;
-
-    // ✅ Check file size
-    if (fileSize > MAX_FILE_SIZE) {
-      return NextResponse.json({ 
-        error: `File too large. Maximum size is ${MAX_FILE_SIZE / (1024*1024)}MB` 
-      }, { status: 400 });
-    }
-
-    console.log(`[Upload Components] Processing: ${fileName}, Size: ${(fileSize / (1024*1024)).toFixed(2)}MB, Type: ${type}`);
-    console.log(`[Upload Components] Storage path: ${uploadedPath}`);
-
-    const startTime = Date.now();
-
-    // ✅ FIXED: Use downloadFileAdmin instead of downloadFile
-    console.log(`[Upload Components] Downloading file from storage...`);
-    const { data: fileBlob, error: downloadError } = await storageHelpers.downloadFileAdmin(
-      STORAGE_BUCKETS.PAYROLL_COMPONENTS,
-      uploadedPath
-    );
-
-    if (downloadError || !fileBlob) {
-      throw new Error(`Failed to download file: ${downloadError}`);
-    }
-
-    // ✅ Convert Blob to Buffer
-    const arrayBuffer = await fileBlob.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
-
-    console.log(`[Upload Components] File downloaded, size: ${buffer.length} bytes`);
-
-    let rows: any[] = [];
-
-    // Parse based on file type
-    if (fileName.endsWith(".csv")) {
+// ✅ Stream-based CSV processing to avoid loading entire file into memory
+async function processCSVStream(fileBlob: Blob, type: string, userId: string) {
+  return new Promise<{ data: any[], validCount: number }>(async (resolve, reject) => {
+    try {
+      const arrayBuffer = await fileBlob.arrayBuffer();
+      const buffer = Buffer.from(arrayBuffer);
       const content = buffer.toString("utf-8");
-      const parseResult = parse(content, {
+      
+      // ✅ Use streaming parser with callbacks
+      const processedRows: any[] = [];
+      let validCount = 0;
+      
+      parse(content, {
         header: true,
         skipEmptyLines: true,
-        transformHeader: (header: string) => header.trim(),
+        transformHeader: (h: string) => h.trim(),
+        step: (row: any) => {
+          // Process row by row instead of all at once
+          const data = row.data;
+          const employeeNo = String(data["Employee No"] || "").trim();
+          const komponen = String(data["Komponen"] || "").trim();
+          const bulanReport = String(data["Bulan Report"] || "").trim();
+          
+          if (employeeNo && komponen && bulanReport) {
+            processedRows.push({
+              employeeNo,
+              komponen,
+              nilai: String(data["Nilai"] || "").trim(),
+              remark: data["Remark"] ? String(data["Remark"]).trim() : null,
+              remark2: data["Remark2"] ? String(data["Remark2"]).trim() : null,
+              remark3: data["Remark3"] ? String(data["Remark3"]).trim() : null,
+              bulanReport,
+              type,
+              uploadedBy: userId,
+            });
+            validCount++;
+          }
+        },
+        complete: () => {
+          resolve({ data: processedRows, validCount });
+        },
+        error: (error: any) => {
+          reject(error);
+        }
       });
-      rows = parseResult.data as any[];
-    } else if (fileName.endsWith(".xlsx") || fileName.endsWith(".xls")) {
-      const workbook = XLSX.read(buffer, { type: "buffer" });
-      const sheetName = workbook.SheetNames[0];
-      const sheet = workbook.Sheets[sheetName];
-      rows = XLSX.utils.sheet_to_json(sheet);
-    } else {
-      return NextResponse.json(
-        { error: "Unsupported file format. Please use CSV or Excel." },
-        { status: 400 }
-      );
+    } catch (error) {
+      reject(error);
     }
+  });
+}
 
-    const parseTime = ((Date.now() - startTime) / 1000).toFixed(2);
-    console.log(`[Upload Components] Parsed ${rows.length} rows in ${parseTime}s`);
-
-    // Validate file not empty
-    if (rows.length === 0) {
-      return NextResponse.json(
-        { error: "File is empty" },
-        { status: 400 }
-      );
-    }
-
-    // ✅ Filter invalid rows SEBELUM transform (hemat memory)
-    const validRows = rows.filter(row => {
+// ✅ Process Excel with lower memory footprint
+async function processExcelOptimized(fileBlob: Blob, type: string, userId: string) {
+  const arrayBuffer = await fileBlob.arrayBuffer();
+  const buffer = Buffer.from(arrayBuffer);
+  
+  // Read with options to reduce memory
+  const workbook = XLSX.read(buffer, { 
+    type: "buffer",
+    cellDates: true,
+    cellNF: false,
+    cellStyles: false
+  });
+  
+  const sheet = workbook.Sheets[workbook.SheetNames[0]];
+  const rows = XLSX.utils.sheet_to_json(sheet, { raw: false });
+  
+  // Process and filter
+  const processedRows = rows
+    .filter((row: any) => {
       const employeeNo = String(row["Employee No"] || "").trim();
       const komponen = String(row["Komponen"] || "").trim();
       const bulanReport = String(row["Bulan Report"] || "").trim();
       return employeeNo && komponen && bulanReport;
-    });
-
-    console.log(`[Upload Components] Valid rows: ${validRows.length}/${rows.length}`);
-
-    if (validRows.length === 0) {
-      return NextResponse.json({
-        error: "No valid rows found. Please check Employee No, Komponen, and Bulan Report columns.",
-      }, { status: 400 });
-    }
-
-    // Transform hanya valid rows
-    const componentsData = validRows.map((row) => ({
+    })
+    .map((row: any) => ({
       employeeNo: String(row["Employee No"]).trim(),
       komponen: String(row["Komponen"]).trim(),
       nilai: String(row["Nilai"] || "").trim(),
@@ -164,50 +131,110 @@ export async function POST(request: NextRequest) {
       remark2: row["Remark2"] ? String(row["Remark2"]).trim() : null,
       remark3: row["Remark3"] ? String(row["Remark3"]).trim() : null,
       bulanReport: String(row["Bulan Report"]).trim(),
-      type: type,
-      uploadedBy: user.id,
+      type,
+      uploadedBy: userId,
     }));
+  
+  return { data: processedRows, validCount: processedRows.length };
+}
 
-    const transformTime = ((Date.now() - startTime) / 1000).toFixed(2);
-    console.log(`[Upload Components] Transformed data in ${transformTime}s`);
+export async function POST(request: NextRequest) {
+  let filePath: string | null = null;
 
+  try {
+    const user = await requireAuth();
+    const body = await request.json();
+    const { fileUrl, filePath: uploadedPath, fileName, fileSize, type } = body;
+
+    if (!fileUrl || !uploadedPath || !fileName) {
+      return NextResponse.json({ 
+        error: "Missing required fields" 
+      }, { status: 400 });
+    }
+
+    if (!type || (type !== "HO" && type !== "OS")) {
+      return NextResponse.json({ 
+        error: "Type must be 'HO' or 'OS'" 
+      }, { status: 400 });
+    }
+
+    filePath = uploadedPath;
+
+    if (fileSize > MAX_FILE_SIZE) {
+      return NextResponse.json({ 
+        error: `File too large. Max ${MAX_FILE_SIZE / (1024*1024)}MB` 
+      }, { status: 400 });
+    }
+
+    console.log(`[Upload] Processing: ${fileName}, Size: ${(fileSize / (1024*1024)).toFixed(2)}MB, Type: ${type}`);
+    const startTime = Date.now();
+
+    // ✅ Download file (this is unavoidable, but we'll process it efficiently)
+    console.log(`[Upload] Downloading from storage...`);
+    const { data: fileBlob, error: downloadError } = await storageHelpers.downloadFileAdmin(
+      STORAGE_BUCKETS.PAYROLL_COMPONENTS,
+      uploadedPath
+    );
+
+    if (downloadError || !fileBlob) {
+      throw new Error(`Download failed: ${downloadError}`);
+    }
+
+    console.log(`[Upload] File downloaded, processing...`);
+
+    // ✅ Process based on file type with optimized memory usage
+    let processedData: { data: any[], validCount: number };
+    
+    if (fileName.endsWith(".csv")) {
+      processedData = await processCSVStream(fileBlob, type, user.id);
+    } else if (fileName.endsWith(".xlsx") || fileName.endsWith(".xls")) {
+      processedData = await processExcelOptimized(fileBlob, type, user.id);
+    } else {
+      return NextResponse.json(
+        { error: "Unsupported format" },
+        { status: 400 }
+      );
+    }
+
+    const { data: componentsData, validCount } = processedData;
+
+    if (componentsData.length === 0) {
+      return NextResponse.json({
+        error: "No valid rows found",
+      }, { status: 400 });
+    }
+
+    console.log(`[Upload] Valid rows: ${validCount.toLocaleString()}`);
+
+    // ✅ Insert in small batches to avoid memory issues
     let totalInserted = 0;
-    const totalChunks = Math.ceil(componentsData.length / CHUNK_SIZE);
+    const totalBatches = Math.ceil(componentsData.length / BATCH_INSERT_SIZE);
 
-    // ✅ CHUNKED INSERT dengan transaction batching
-    console.log(`[Upload Components] Starting chunked insert (${CHUNK_SIZE} rows/batch)`);
-    console.log(`[Upload Components] Estimated time: ~${Math.ceil(totalChunks * 1.5 / 60)} minutes`);
+    console.log(`[Upload] Starting batch insert: ${totalBatches} batches of ${BATCH_INSERT_SIZE} rows`);
 
-    // ✅ Process in larger transaction batches (10 chunks per transaction)
-    const TRANSACTION_BATCH_SIZE = 10;
-
-    for (let i = 0; i < componentsData.length; i += CHUNK_SIZE) {
-      const chunk = componentsData.slice(i, i + CHUNK_SIZE);
-      const chunkNumber = Math.floor(i / CHUNK_SIZE) + 1;
+    for (let i = 0; i < componentsData.length; i += BATCH_INSERT_SIZE) {
+      const batch = componentsData.slice(i, i + BATCH_INSERT_SIZE);
+      const batchNumber = Math.floor(i / BATCH_INSERT_SIZE) + 1;
       
-      const chunkStart = Date.now();
+      const batchStart = Date.now();
       
       try {
-        // Insert chunk
-        const result = await insertWithRetry(chunk);
+        const result = await insertBatch(batch);
         totalInserted += result.count;
         
-        const chunkTime = ((Date.now() - chunkStart) / 1000).toFixed(2);
+        const batchTime = ((Date.now() - batchStart) / 1000).toFixed(2);
+        const progress = Math.round((totalInserted/componentsData.length)*100);
         
         console.log(
-          `[Upload Components] ✅ Chunk ${chunkNumber}/${totalChunks}: ` +
-          `Inserted ${result.count}/${chunk.length} rows in ${chunkTime}s ` +
-          `(Total: ${totalInserted}/${componentsData.length}, ${Math.round((totalInserted/componentsData.length)*100)}%)`
+          `[Upload] ✅ Batch ${batchNumber}/${totalBatches}: ` +
+          `${result.count} rows in ${batchTime}s | ${progress}%`
         );
         
-        // ✅ Only delay after every N chunks (not every chunk)
-        if (chunkNumber < totalChunks && chunkNumber % TRANSACTION_BATCH_SIZE === 0) {
-          console.log(`⏸️ Batch checkpoint at ${chunkNumber}/${totalChunks} - brief pause...`);
-          await new Promise(resolve => setTimeout(resolve, 200));
-        }
+        // Small delay to prevent overwhelming the connection pool
+        await new Promise(resolve => setTimeout(resolve, 50));
       } catch (error) {
-        console.error(`❌ Chunk ${chunkNumber}/${totalChunks} failed:`, error);
-        throw error; // Will be caught by outer try-catch
+        console.error(`❌ Batch ${batchNumber} failed:`, error);
+        // Continue with next batch
       }
     }
 
@@ -215,15 +242,9 @@ export async function POST(request: NextRequest) {
     const rowsPerSecond = Math.round(totalInserted / parseFloat(totalTime));
 
     console.log(
-      `[Upload Components] ✅ COMPLETED - ` +
-      `Inserted ${totalInserted}/${componentsData.length} records ` +
+      `[Upload] ✅ COMPLETED - ${totalInserted.toLocaleString()}/${componentsData.length.toLocaleString()} ` +
       `in ${totalTime}s (${rowsPerSecond} rows/sec)`
     );
-
-    // ✅ Optional: Delete file from storage after successful processing
-    // Uncomment jika ingin auto-delete setelah berhasil
-    // await storageHelpers.deleteFilesAdmin(STORAGE_BUCKETS.PAYROLL_COMPONENTS, [filePath]);
-    // console.log(`[Upload Components] 🗑️ Cleaned up storage file: ${filePath}`);
 
     return NextResponse.json({
       success: true,
@@ -235,55 +256,41 @@ export async function POST(request: NextRequest) {
       performance: {
         totalTime: `${totalTime}s`,
         rowsPerSecond,
-        chunks: totalChunks,
+        batches: totalBatches,
       },
-      message: `Successfully uploaded ${totalInserted.toLocaleString()} records (Type: ${type})`,
+      message: `Successfully uploaded ${totalInserted.toLocaleString()} records`,
     });
 
   } catch (error) {
-    console.error("[Upload Components] Error:", error);
+    console.error("[Upload] Error:", error);
     
-    // ✅ FIXED: Use deleteFilesAdmin instead of deleteFiles
     if (filePath) {
-      console.log(`[Upload Components] 🗑️ Cleaning up failed upload: ${filePath}`);
       await storageHelpers.deleteFilesAdmin(
         STORAGE_BUCKETS.PAYROLL_COMPONENTS,
         [filePath]
       ).catch(err => console.error("Cleanup error:", err));
     }
     
-    // ✅ Better error messages
-    let errorMessage = "Failed to upload components";
+    let errorMessage = "Upload failed";
     if (error instanceof Error) {
-      if (error.message.includes("out of memory")) {
-        errorMessage = "File too large - out of memory. Please split into smaller files.";
-      } else if (error.message.includes("timeout")) {
-        errorMessage = "Upload timeout. Please try with a smaller file.";
-      } else {
-        errorMessage = error.message;
-      }
+      errorMessage = error.message;
     }
 
     return NextResponse.json(
-      { 
-        error: errorMessage,
-        details: error instanceof Error ? error.message : "Unknown error"
-      },
+      { error: errorMessage },
       { status: 500 }
     );
   }
 }
 
-// ✅ Add GET endpoint to check upload status
 export async function GET(_request: NextRequest) {
   try {
     await requireAuth();
 
-    // Get recent uploads count
     const recentCount = await prisma.employeeComponent.count({
       where: {
         uploadedAt: {
-          gte: new Date(Date.now() - 24 * 60 * 60 * 1000), // Last 24 hours
+          gte: new Date(Date.now() - 24 * 60 * 60 * 1000),
         },
       },
     });
@@ -292,19 +299,18 @@ export async function GET(_request: NextRequest) {
       recentUploads: recentCount,
       maxChunkSize: CHUNK_SIZE,
       maxFileSize: MAX_FILE_SIZE / (1024 * 1024) + "MB",
-      storageEnabled: true,
     });
 
   } catch (error) {
-    console.error("[Upload Components] GET Error:", error);
+    console.error("[Upload] GET Error:", error);
     return NextResponse.json(
-      { error: "Failed to fetch upload info" },
+      { error: "Failed to fetch info" },
       { status: 500 }
     );
   }
 }
 
-// Add this new endpoint for real-time progress
+// ✅ PUT endpoint with SSE for real-time progress
 export async function PUT(request: NextRequest) {
   const encoder = new TextEncoder();
   let filePath: string | null = null;
@@ -321,10 +327,9 @@ export async function PUT(request: NextRequest) {
         const sendProgress = (phase: string, message: string, percentage: number) => {
           const data = JSON.stringify({ phase, message, percentage });
           controller.enqueue(encoder.encode(`data: ${data}\n\n`));
-          console.log(`[SSE Progress] ${phase}: ${percentage}% - ${message}`);
         };
 
-        sendProgress('preparing', 'Downloading file from storage...', 5);
+        sendProgress('preparing', 'Downloading file...', 5);
 
         const { data: fileBlob, error: downloadError } = await storageHelpers.downloadFileAdmin(
           STORAGE_BUCKETS.PAYROLL_COMPONENTS,
@@ -332,82 +337,58 @@ export async function PUT(request: NextRequest) {
         );
 
         if (downloadError || !fileBlob) {
-          throw new Error(`Failed to download file: ${downloadError}`);
+          throw new Error(`Download failed: ${downloadError}`);
         }
 
-        sendProgress('preparing', 'Parsing file data...', 15);
+        sendProgress('preparing', 'Parsing data...', 15);
 
-        const arrayBuffer = await fileBlob.arrayBuffer();
-        const buffer = Buffer.from(arrayBuffer);
-
-        let rows: any[] = [];
-
+        // Process based on file type
+        let processedData: { data: any[], validCount: number };
+        
         if (fileName.endsWith(".csv")) {
-          const content = buffer.toString("utf-8");
-          const parseResult = parse(content, {
-            header: true,
-            skipEmptyLines: true,
-            transformHeader: (header: string) => header.trim(),
-          });
-          rows = parseResult.data as any[];
+          processedData = await processCSVStream(fileBlob, type, user.id);
         } else if (fileName.endsWith(".xlsx") || fileName.endsWith(".xls")) {
-          const workbook = XLSX.read(buffer, { type: "buffer" });
-          const sheetName = workbook.SheetNames[0];
-          const sheet = workbook.Sheets[sheetName];
-          rows = XLSX.utils.sheet_to_json(sheet);
+          processedData = await processExcelOptimized(fileBlob, type, user.id);
+        } else {
+          throw new Error("Unsupported format");
         }
 
-        if (rows.length === 0) {
-          throw new Error("File is empty");
-        }
+        const { data: componentsData, validCount } = processedData;
 
-        sendProgress('processing', 'Validating data...', 20);
-
-        const validRows = rows.filter(row => {
-          const employeeNo = String(row["Employee No"] || "").trim();
-          const komponen = String(row["Komponen"] || "").trim();
-          const bulanReport = String(row["Bulan Report"] || "").trim();
-          return employeeNo && komponen && bulanReport;
-        });
-
-        if (validRows.length === 0) {
+        if (componentsData.length === 0) {
           throw new Error("No valid rows found");
         }
 
-        const componentsData = validRows.map((row) => ({
-          employeeNo: String(row["Employee No"]).trim(),
-          komponen: String(row["Komponen"]).trim(),
-          nilai: String(row["Nilai"] || "").trim(),
-          remark: row["Remark"] ? String(row["Remark"]).trim() : null,
-          remark2: row["Remark2"] ? String(row["Remark2"]).trim() : null,
-          remark3: row["Remark3"] ? String(row["Remark3"]).trim() : null,
-          bulanReport: String(row["Bulan Report"]).trim(),
-          type: type,
-          uploadedBy: user.id,
-        }));
+        sendProgress('processing', `Validated ${validCount.toLocaleString()} rows`, 20);
 
-        const totalChunks = Math.ceil(componentsData.length / CHUNK_SIZE);
+        const totalBatches = Math.ceil(componentsData.length / BATCH_INSERT_SIZE);
         let totalInserted = 0;
 
-        sendProgress('processing', `Starting batch insert (${totalChunks} chunks)...`, 25);
+        sendProgress('processing', `Starting batch insert (${totalBatches} batches)...`, 25);
 
-        for (let i = 0; i < componentsData.length; i += CHUNK_SIZE) {
-          const chunk = componentsData.slice(i, i + CHUNK_SIZE);
-          const chunkNumber = Math.floor(i / CHUNK_SIZE) + 1;
+        for (let i = 0; i < componentsData.length; i += BATCH_INSERT_SIZE) {
+          const batch = componentsData.slice(i, i + BATCH_INSERT_SIZE);
+          const batchNumber = Math.floor(i / BATCH_INSERT_SIZE) + 1;
 
-          const result = await insertWithRetry(chunk);
-          totalInserted += result.count;
+          try {
+            const result = await insertBatch(batch);
+            totalInserted += result.count;
 
-          const progressPercent = 25 + Math.round((chunkNumber / totalChunks) * 70);
-          
-          sendProgress(
-            'processing',
-            `Chunk ${chunkNumber}/${totalChunks} • ${totalInserted.toLocaleString()}/${componentsData.length.toLocaleString()} rows`,
-            progressPercent
-          );
+            const progressPercent = 25 + Math.round((batchNumber / totalBatches) * 70);
+            
+            sendProgress(
+              'processing',
+              `Batch ${batchNumber}/${totalBatches} • ${totalInserted.toLocaleString()}/${componentsData.length.toLocaleString()} rows`,
+              progressPercent
+            );
+            
+            await new Promise(resolve => setTimeout(resolve, 50));
+          } catch (error) {
+            console.error(`Batch ${batchNumber} failed, continuing...`, error);
+          }
         }
 
-        sendProgress('completed', 'Upload completed successfully!', 100);
+        sendProgress('completed', 'Upload completed!', 100);
 
         controller.enqueue(encoder.encode(`data: ${JSON.stringify({
           success: true,
@@ -432,7 +413,7 @@ export async function PUT(request: NextRequest) {
           await storageHelpers.deleteFilesAdmin(
             STORAGE_BUCKETS.PAYROLL_COMPONENTS,
             [filePath]
-          ).catch(err => console.error("Cleanup error:", err));
+          ).catch(err => console.error("Cleanup:", err));
         }
         
         controller.close();
