@@ -1,9 +1,17 @@
-// app/api/dashboard/employee-age/route.ts
 /* eslint-disable @typescript-eslint/no-explicit-any */
+
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
+
+// Caching
+const ageCache = new Map<string, { data: any; timestamp: number }>();
+const AGE_CACHE_DURATION = 10 * 60 * 1000; // 10 minutes (age data changes less frequently)
+
+function getAgeCacheKey(year: string | null, month: string | null): string {
+  return `age-${year || 'all'}-${month || 'all'}`;
+}
 
 function getMonthName(monthNum: string): string {
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
@@ -13,8 +21,23 @@ function getMonthName(monthNum: string): string {
 
 function calculateAge(birthDate: string): number {
   try {
-    // Parse date in various formats
-    const date = new Date(birthDate);
+    const cleanedDate = birthDate.trim();
+    let date: Date;
+    
+    if (cleanedDate.includes('/') || cleanedDate.includes('-')) {
+      const parts = cleanedDate.split(/[/-]/);
+      if (parts.length === 3) {
+        const day = parseInt(parts[0]);
+        const month = parseInt(parts[1]) - 1;
+        const year = parseInt(parts[2]);
+        date = new Date(year, month, day);
+      } else {
+        date = new Date(cleanedDate);
+      }
+    } else {
+      date = new Date(cleanedDate);
+    }
+    
     if (isNaN(date.getTime())) return 0;
     
     const today = new Date();
@@ -24,6 +47,8 @@ function calculateAge(birthDate: string): number {
     if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < date.getDate())) {
       age--;
     }
+    
+    if (age < 18 || age > 100) return 0;
     
     return age;
   } catch {
@@ -44,6 +69,8 @@ function getAgeRange(age: number): string {
 }
 
 export async function GET(request: Request) {
+  const startTime = Date.now();
+  
   try {
     const session = await getServerSession(authOptions);
     if (!session) {
@@ -54,7 +81,15 @@ export async function GET(request: Request) {
     const year = searchParams.get('year');
     const month = searchParams.get('month');
 
-    const whereCondition: any = {};
+    // Check cache
+    const cacheKey = getAgeCacheKey(year, month);
+    const cached = ageCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < AGE_CACHE_DURATION) {
+      console.log(`[Cache HIT] ${cacheKey}`);
+      return NextResponse.json(cached.data);
+    }
+
+    const whereCondition: any = { komponen: 'Birth Date' };
 
     if (year && year !== '(All)') {
       if (month && month !== '(All)') {
@@ -69,30 +104,26 @@ export async function GET(request: Request) {
       whereCondition.bulanReport = { contains: `-${getMonthName(month)}-` };
     }
 
-    // Get birth dates from remarks of Birth Date component
+    console.time('Query-Age');
+    
     const birthDates = await prisma.employeeComponent.findMany({
-      where: {
-        ...whereCondition,
-        komponen: 'Birth Date',
-      },
+      where: whereCondition,
       select: {
         employeeNo: true,
-        remark: true, // Birth date is stored in remarks
+        remark: true,
       },
       distinct: ['employeeNo'],
     });
+    
+    console.timeEnd('Query-Age');
 
-    console.log(`[Age API] Found ${birthDates.length} employees with birth dates`);
-
-    // Calculate age ranges
     const ageRangeMap = new Map<string, number>();
     const ageRanges = ['< 25', '25-29', '30-34', '35-39', '40-44', '45-49', '50-54', '55-59', '60+'];
     
-    // Initialize all ranges with 0
     ageRanges.forEach(range => ageRangeMap.set(range, 0));
 
     birthDates.forEach(item => {
-      if (item.remark) {
+      if (item.remark && item.remark.trim() !== '') {
         const age = calculateAge(item.remark);
         if (age > 0) {
           const range = getAgeRange(age);
@@ -106,7 +137,17 @@ export async function GET(request: Request) {
       count: ageRangeMap.get(range) || 0,
     }));
 
-    console.log('[Age API] Result:', result);
+    // Cache result
+    ageCache.set(cacheKey, { data: result, timestamp: Date.now() });
+    if (ageCache.size > 100) {
+      const oldestKey = ageCache.keys().next().value;
+      if (oldestKey) {
+        ageCache.delete(oldestKey);
+      }
+    }
+
+    const duration = Date.now() - startTime;
+    console.log(`[Age API] Completed in ${duration}ms`);
 
     return NextResponse.json(result);
 

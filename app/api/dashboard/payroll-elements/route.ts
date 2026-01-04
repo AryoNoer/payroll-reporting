@@ -5,6 +5,14 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 
+// Caching
+const elementsCache = new Map<string, { data: any; timestamp: number }>();
+const ELEMENTS_CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
+
+function getElementsCacheKey(year: string | null, month: string | null): string {
+  return `elements-${year || 'all'}-${month || 'all'}`;
+}
+
 function getMonthName(monthNum: string): string {
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -30,6 +38,14 @@ export async function GET(request: Request) {
     const year = searchParams.get('year');
     const month = searchParams.get('month');
 
+    // Check cache
+    const cacheKey = getElementsCacheKey(year, month);
+    const cached = elementsCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < ELEMENTS_CACHE_DURATION) {
+      console.log(`[Cache HIT] ${cacheKey}`);
+      return NextResponse.json(cached.data);
+    }
+
     // Build where condition for current month
     const whereConditionCurrent: any = {};
 
@@ -46,13 +62,14 @@ export async function GET(request: Request) {
       whereConditionCurrent.bulanReport = { contains: `-${getMonthName(month)}-` };
     }
 
-    // Get all components (excluding basic salary components)
+    // Get all allowance components (remark = 'Allowance')
     const excludedComponents = ['Net Salary', 'Gross Salary', 'Basic Salary', 'Name', 'Directorate', 'Grade', 'Birth Date', 'Length Of Service'];
     
     const currentComponents = await prisma.employeeComponent.findMany({
       where: {
         ...whereConditionCurrent,
         komponen: { notIn: excludedComponents },
+        remark: 'Allowance', // Only get Allowance items
       },
       select: {
         komponen: true,
@@ -76,6 +93,7 @@ export async function GET(request: Request) {
 
     // Get previous month data if specific month is selected
     const previousValueMap = new Map<string, number>();
+    let previousResult: any[] = [];
     
     if (year && year !== '(All)' && month && month !== '(All)') {
       const prev = getPreviousMonth(year, month);
@@ -86,6 +104,7 @@ export async function GET(request: Request) {
           { bulanReport: { contains: prev.year } }
         ],
         komponen: { notIn: excludedComponents },
+        remark: 'Allowance', // Only get Allowance items
       };
 
       const previousComponents = await prisma.employeeComponent.findMany({
@@ -100,21 +119,53 @@ export async function GET(request: Request) {
         const value = parseFloat(c.nilai) || 0;
         previousValueMap.set(c.komponen, (previousValueMap.get(c.komponen) || 0) + value);
       });
+
+      previousResult = Array.from(previousValueMap.entries())
+        .map(([name, value]) => ({ name, value: Math.round(value) }))
+        .sort((a, b) => b.value - a.value)
+        .slice(0, 10);
     }
 
-    // Add previous values to current result
-    currentResult = currentResult.map(item => ({
-      ...item,
-      previousValue: Math.round(previousValueMap.get(item.name) || 0),
-    }));
+    // Add previous values and calculate percentage change to current result
+    currentResult = currentResult.map(item => {
+      const previousValue = Math.round(previousValueMap.get(item.name) || 0);
+      let percentageChange = 0;
+      
+      if (previousValue > 0) {
+        percentageChange = ((item.value - previousValue) / previousValue) * 100;
+      }
+      
+      
+      return {
+        ...item,
+        previousValue,
+        percentageChange: Math.round(percentageChange * 100) / 100, // Round to 2 decimal places
+      };
+    });
+
+
+
+    // Add percentage change to previous result (comparing with current)
+    previousResult = previousResult.map(item => {
+      const currentValue = currentResult.find(c => c.name === item.name)?.value || 0;
+      let percentageChange = 0;
+      
+      if (item.value > 0 && currentValue > 0) {
+        percentageChange = ((currentValue - item.value) / item.value) * 100;
+      }
+      
+      return {
+        ...item,
+        currentValue,
+        percentageChange: Math.round(percentageChange * 100) / 100,
+      };
+    });
 
     return NextResponse.json({
       current: currentResult,
-      previous: Array.from(previousValueMap.entries())
-        .map(([name, value]) => ({ name, value: Math.round(value) }))
-        .sort((a, b) => b.value - a.value)
-        .slice(0, 10),
+      previous: previousResult,
     });
+
 
   } catch (error) {
     console.error('Error fetching payroll elements:', error);

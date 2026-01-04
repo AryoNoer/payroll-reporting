@@ -1,21 +1,54 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
-// File: app/api/dashboard/payroll-by-department/route.ts
-
+// File: app/api/dashboard/payroll-by-department/route.ts - OPTIMIZED
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 
 // ============================================================================
+// CACHING LAYER
+// ============================================================================
+const cache = new Map<string, { data: any; timestamp: number }>();
+const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
 
+function getCacheKey(year: string | null, month: string | null): string {
+  return `dept-${year || 'all'}-${month || 'all'}`;
+}
 
-// Helper function untuk convert "01" -> "Jan"
+function getFromCache(key: string): any | null {
+  const cached = cache.get(key);
+  if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
+    console.log(`[Cache HIT] ${key}`);
+    return cached.data;
+  }
+  return null;
+}
+
+function setCache(key: string, data: any): void {
+  cache.set(key, { data, timestamp: Date.now() });
+  if (cache.size > 100) {
+    const oldestKey = cache.keys().next().value;
+    if (oldestKey) {
+      cache.delete(oldestKey);
+    }
+  }
+}
+
+// ============================================================================
+// HELPER FUNCTIONS
+// ============================================================================
 function getMonthName(monthNum: string): string {
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   return months[parseInt(monthNum) - 1];
 }
-export async function GET (request: Request) {
+
+// ============================================================================
+// MAIN API HANDLER
+// ============================================================================
+export async function GET(request: Request) {
+  const startTime = Date.now();
+  
   try {
     const session = await getServerSession(authOptions);
     if (!session) {
@@ -26,69 +59,83 @@ export async function GET (request: Request) {
     const year = searchParams.get('year');
     const month = searchParams.get('month');
 
-   const whereCondition: any = {};
+    // Check cache
+    const cacheKey = getCacheKey(year, month);
+    const cachedData = getFromCache(cacheKey);
+    if (cachedData) {
+      return NextResponse.json(cachedData);
+    }
 
-if (year && year !== '(All)') {
-  if (month && month !== '(All)') {
-    // Filter: "31-Jan-2025" contains both "-Jan-" and "2025"
-    whereCondition.AND = [
-      { bulanReport: { contains: `-${getMonthName(month)}-` } },
-      { bulanReport: { contains: year } }
-    ];
-  } else {
-    // Filter year only: "2025"
-    whereCondition.bulanReport = {
-      contains: year
-    };
-  }
-} else if (month && month !== '(All)') {
-  // Filter month only: "-Jan-"
-  whereCondition.bulanReport = {
-    contains: `-${getMonthName(month)}-`
-  };
-}
+    // Build where condition
+    const whereCondition: any = {};
 
-
-    const employeesWithDept = await prisma.employeeComponent.findMany({
-      where: {
-        ...whereCondition,
-        komponen: 'Directorate'
-      },
-      select: {
-        employeeNo: true,
-        nilai: true
+    if (year && year !== '(All)') {
+      if (month && month !== '(All)') {
+        whereCondition.AND = [
+          { bulanReport: { contains: `-${getMonthName(month)}-` } },
+          { bulanReport: { contains: year } }
+        ];
+      } else {
+        whereCondition.bulanReport = { contains: year };
       }
-    });
+    } else if (month && month !== '(All)') {
+      whereCondition.bulanReport = { contains: `-${getMonthName(month)}-` };
+    }
 
-    const salaries = await prisma.employeeComponent.findMany({
-      where: {
-        ...whereCondition,
-        komponen: 'Net Salary'
-      },
-      select: {
-        employeeNo: true,
-        nilai: true
-      }
-    });
-
-    const salaryMap = new Map(
-      salaries.map(s => [s.employeeNo, parseFloat(s.nilai) || 0])
-    );
-
-    const deptMap = new Map<string, number>();
+    // ========================================================================
+    // OPTIMIZED: Single query to get Directorate AND Net Salary
+    // ========================================================================
+    console.time('Query-Dept-Combined');
     
-    employeesWithDept.forEach(emp => {
-      const dept = emp.nilai;
-      const salary = salaryMap.get(emp.employeeNo) || 0;
-      deptMap.set(dept, (deptMap.get(dept) || 0) + salary);
+    const allData = await prisma.employeeComponent.findMany({
+      where: {
+        ...whereCondition,
+        OR: [
+          { komponen: 'Directorate' },
+          { komponen: 'Net Salary' }
+        ]
+      },
+      select: {
+        employeeNo: true,
+        komponen: true,
+        nilai: true
+      }
+    });
+    
+    console.timeEnd('Query-Dept-Combined');
+
+    // Process in memory
+    const salaryMap = new Map<string, number>();
+    const deptMap = new Map<string, string>();
+    
+    allData.forEach(item => {
+      if (item.komponen === 'Net Salary') {
+        salaryMap.set(item.employeeNo, parseFloat(item.nilai) || 0);
+      } else if (item.komponen === 'Directorate') {
+        deptMap.set(item.employeeNo, item.nilai);
+      }
     });
 
-    const result = Array.from(deptMap.entries()).map(([name, value]) => ({
-      name,
-      value: Math.round(value)
-    }));
+    // Aggregate by department
+    const deptTotalMap = new Map<string, number>();
+    
+    deptMap.forEach((dept, employeeNo) => {
+      const salary = salaryMap.get(employeeNo) || 0;
+      deptTotalMap.set(dept, (deptTotalMap.get(dept) || 0) + salary);
+    });
 
-    result.sort((a, b) => b.value - a.value);
+    const result = Array.from(deptTotalMap.entries())
+      .map(([name, value]) => ({
+        name,
+        value: Math.round(value)
+      }))
+      .sort((a, b) => b.value - a.value);
+
+    // Cache result
+    setCache(cacheKey, result);
+
+    const duration = Date.now() - startTime;
+    console.log(`[Dept API] Completed in ${duration}ms`);
 
     return NextResponse.json(result);
 

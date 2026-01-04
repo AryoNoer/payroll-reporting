@@ -5,6 +5,14 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 
+// Caching
+const jobTypeCache = new Map<string, { data: any; timestamp: number }>();
+const JOB_TYPE_CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
+
+function getJobTypeCacheKey(year: string | null, month: string | null): string {
+  return `job-type-${year || 'all'}-${month || 'all'}`;
+}
+
 function getMonthName(monthNum: string): string {
   const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
                   'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -21,6 +29,15 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
     const year = searchParams.get('year');
     const month = searchParams.get('month');
+    const directorate = searchParams.get('directorate');
+
+        // Check cache
+    const cacheKey = getJobTypeCacheKey(year, month);
+    const cached = jobTypeCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < JOB_TYPE_CACHE_DURATION) {
+      console.log(`[Cache HIT] ${cacheKey}`);
+      return NextResponse.json(cached.data);
+    }
 
     const whereCondition: any = {};
 
@@ -46,16 +63,39 @@ export async function GET(request: Request) {
 
     const employeeNoList = employeeNos.map(e => e.employeeNo);
 
-    // Get Grade (remarks) for these employees
-    const grades = await prisma.employeeComponent.findMany({
+    // Get Directorate for filtering
+    const directorates = await prisma.employeeComponent.findMany({
       where: {
         ...whereCondition,
         employeeNo: { in: employeeNoList },
+        komponen: 'Directorate',
+      },
+      select: {
+        employeeNo: true,
+        nilai: true,
+      },
+    });
+
+    const directorateMap = new Map(directorates.map(d => [d.employeeNo, d.nilai]));
+
+    // Filter employees by directorate if specified
+    let filteredEmployeeList = employeeNoList;
+    if (directorate && directorate !== '(All)') {
+      filteredEmployeeList = employeeNoList.filter(empNo => 
+        directorateMap.get(empNo) === directorate
+      );
+    }
+
+    // Get Grade (nilai field) for these employees
+    const grades = await prisma.employeeComponent.findMany({
+      where: {
+        ...whereCondition,
+        employeeNo: { in: filteredEmployeeList },
         komponen: 'Grade',
       },
       select: {
         employeeNo: true,
-        remark: true, // Using remarks field for grade
+        nilai: true, // Using nilai field for grade value
       },
     });
 
@@ -63,7 +103,7 @@ export async function GET(request: Request) {
     const salaries = await prisma.employeeComponent.findMany({
       where: {
         ...whereCondition,
-        employeeNo: { in: employeeNoList },
+        employeeNo: { in: filteredEmployeeList },
         komponen: 'Net Salary',
       },
       select: {
@@ -73,7 +113,7 @@ export async function GET(request: Request) {
     });
 
     // Create maps
-    const gradeMap = new Map(grades.map(g => [g.employeeNo, g.remark || 'Unknown']));
+    const gradeMap = new Map(grades.map(g => [g.employeeNo, g.nilai || 'Unknown']));
     const gradePayrollMap = new Map<string, number>();
     
     salaries.forEach(s => {
@@ -87,9 +127,26 @@ export async function GET(request: Request) {
       value: Math.round(value),
     }));
 
+     // Cache result
+    jobTypeCache.set(cacheKey, { data: result, timestamp: Date.now() });
+    if (jobTypeCache.size > 100) {
+      const oldestKey = jobTypeCache.keys().next().value;
+      if (oldestKey) {
+        jobTypeCache.delete(oldestKey);
+      }
+    }
+
     result.sort((a, b) => b.value - a.value);
 
-    return NextResponse.json(result);
+    // Get list of all directorates for filter dropdown
+    const allDirectorates = [...new Set(Array.from(directorateMap.values()))]
+      .filter(d => d && d.trim() !== '')
+      .sort();
+
+    return NextResponse.json({
+      data: result,
+      directorates: allDirectorates,
+    });
 
   } catch (error) {
     console.error('Error fetching payroll by job type:', error);
