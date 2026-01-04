@@ -157,67 +157,75 @@ export default function UploadComponentsPage() {
         throw new Error(`Upload failed: ${uploadError}`);
       }
 
-      // Step 2: Prepare - Get total chunks
+      // ✅ Step 2: Estimate chunks based on file size (skip prepare to avoid timeout)
+      // Rough estimate: 1MB ≈ 3000-5000 rows, use 10k rows per chunk
+      const estimatedRows = Math.floor((file.size / (1024 * 1024)) * 4000); // Conservative estimate
+      const ROWS_PER_CHUNK = 10000;
+      const estimatedChunks = Math.max(
+        1,
+        Math.ceil(estimatedRows / ROWS_PER_CHUNK)
+      );
+
       setProgress({
-        phase: "preparing",
-        message: "Analyzing file...",
+        phase: "processing",
+        message: `Starting processing (estimated ${estimatedChunks} batches)...`,
         percentage: 15,
       });
 
-      const prepareResponse = await fetch("/api/uploads/components", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          fileUrl,
-          filePath,
-          fileName: file.name,
-          fileSize: file.size,
-          type: selectedType,
-          action: "prepare",
-        }),
-      });
-
-      if (!prepareResponse.ok) {
-        throw new Error("Failed to prepare file");
-      }
-
-      const { totalChunks, totalRows } = await prepareResponse.json();
-
-      // Step 3: Process chunks sequentially
+      // ✅ Step 3: Process chunks until we get empty response
+      let chunkIndex = 0;
       let totalInserted = 0;
+      let completed = false;
 
-      for (let chunkIndex = 0; chunkIndex < totalChunks; chunkIndex++) {
-        const chunkProgress = 20 + Math.round((chunkIndex / totalChunks) * 75);
+      while (!completed && chunkIndex < 200) {
+        // Max 200 chunks = 2M rows safety limit
+        const chunkProgress =
+          20 + Math.round((chunkIndex / estimatedChunks) * 75);
 
         setProgress({
           phase: "processing",
           message: `Processing batch ${
             chunkIndex + 1
-          }/${totalChunks} • ${totalInserted.toLocaleString()} rows inserted`,
-          percentage: chunkProgress,
+          } • ${totalInserted.toLocaleString()} rows inserted`,
+          percentage: Math.min(95, chunkProgress),
         });
 
-        const processResponse = await fetch("/api/uploads/components", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({
-            fileUrl,
-            filePath,
-            fileName: file.name,
-            fileSize: file.size,
-            type: selectedType,
-            action: "process",
-            chunkIndex,
-          }),
-        });
+        try {
+          const processResponse = await fetch("/api/uploads/components", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              fileUrl,
+              filePath,
+              fileName: file.name,
+              fileSize: file.size,
+              type: selectedType,
+              action: "process",
+              chunkIndex,
+            }),
+          });
 
-        if (!processResponse.ok) {
-          console.error(`Chunk ${chunkIndex + 1} failed, continuing...`);
-          continue; // Continue with next chunk instead of failing
+          if (!processResponse.ok) {
+            console.error(`Chunk ${chunkIndex + 1} failed, continuing...`);
+            chunkIndex++;
+            continue;
+          }
+
+          const result = await processResponse.json();
+
+          // ✅ If no rows processed, we've reached the end
+          if (result.processed === 0 || result.inserted === 0) {
+            completed = true;
+            break;
+          }
+
+          totalInserted += result.inserted;
+          chunkIndex++;
+        } catch (error) {
+          console.error(`Chunk ${chunkIndex + 1} error:`, error);
+          // Try next chunk
+          chunkIndex++;
         }
-
-        const { inserted } = await processResponse.json();
-        totalInserted += inserted;
       }
 
       setProgress({
@@ -230,8 +238,8 @@ export default function UploadComponentsPage() {
       showModal(
         "success",
         "File Uploaded Successfully! 🎉",
-        `Successfully processed ${totalInserted.toLocaleString()}/${totalRows.toLocaleString()} rows`,
-        { totalInserted, totalRows, chunks: totalChunks },
+        `Successfully processed ${totalInserted.toLocaleString()} rows in ${chunkIndex} batches`,
+        { totalInserted, chunks: chunkIndex },
         () => {
           setFile(null);
           setProgress(null);
