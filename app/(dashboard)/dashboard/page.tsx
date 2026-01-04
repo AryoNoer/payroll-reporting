@@ -265,6 +265,8 @@ export default function DashboardPage() {
               className="bg-white text-gray-900 px-4 py-2 rounded border"
             >
               <option value="(All)">(All)</option>
+              <option value="2022">2022</option>
+              <option value="2023">2023</option>
               <option value="2024">2024</option>
               <option value="2025">2025</option>
             </select>

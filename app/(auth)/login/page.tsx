@@ -86,7 +86,7 @@ export default function LoginPage() {
                   onChange={(e) => setEmail(e.target.value)}
                   required
                   className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
-                  placeholder="dinda@test.com"
+                  placeholder="admin@payroll.com"
                   disabled={isLoading}
                 />
               </div>
@@ -130,7 +130,7 @@ export default function LoginPage() {
             <div className="mt-6 text-center text-sm text-gray-600">
               <p>Default login:</p>
               <p className="font-mono text-xs mt-2">
-                dinda@test.com / admin123
+                admin@payroll.com / admin123
               </p>
             </div>
           </div>
