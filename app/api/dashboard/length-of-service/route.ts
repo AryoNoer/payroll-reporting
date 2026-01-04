@@ -22,7 +22,11 @@ function getMonthName(monthNum: string): string {
 function parseServiceYears(serviceString: string): number {
   try {
     const cleaned = serviceString.trim().toLowerCase();
-    console.log('Parsing:', cleaned); // Debug log
+    
+    // Skip if it's "Information" or other placeholder text
+    if (cleaned === 'information' || cleaned === 'prior' || cleaned.length < 3) {
+      return 0;
+    }
     
     // Handle format: "10 year 7 month" or "6 year 2 month"
     const yearMatch = cleaned.match(/(\d+)\s*year/);
@@ -39,16 +43,21 @@ function parseServiceYears(serviceString: string): number {
       totalYears += months / 12; // Convert months to years
     }
     
+    // If no match found with "year" or "month", try to extract just numbers
+    if (totalYears === 0) {
+      const numberMatch = cleaned.match(/(\d+\.?\d*)/);
+      if (numberMatch) {
+        totalYears = parseFloat(numberMatch[1]);
+      }
+    }
+    
     // Validate range
-    if (totalYears >= 0 && totalYears <= 60) {
-      console.log('Parsed years:', totalYears); // Debug log
+    if (totalYears > 0 && totalYears <= 60) {
       return totalYears;
     }
     
-    console.log('Years out of range:', totalYears); // Debug log
     return 0;
   } catch (error) {
-    console.error('Error parsing service years:', error);
     return 0;
   }
 }
@@ -84,7 +93,7 @@ export async function GET(request: Request) {
       return NextResponse.json(cached.data);
     }
 
-    const whereCondition: any = { komponen: 'Length Of Service' };
+    const whereCondition: any = { komponen: 'Length of Service' };
 
     if (year && year !== '(All)') {
       if (month && month !== '(All)') {
@@ -102,17 +111,26 @@ export async function GET(request: Request) {
     console.time('Query-LOS');
     console.log('WHERE condition:', JSON.stringify(whereCondition, null, 2));
     
+    // Fetch all possible columns that might contain service years
     const serviceData = await prisma.employeeComponent.findMany({
       where: whereCondition,
       select: {
         employeeNo: true,
+        nilai: true,
         remark: true,
+        remark2: true,
+        remark3: true,
       },
       distinct: ['employeeNo'],
     });
     
     console.timeEnd('Query-LOS');
     console.log('Total records fetched:', serviceData.length);
+    
+    // Debug: Log first 3 records to see the data structure
+    if (serviceData.length > 0) {
+      console.log('Sample LOS records:', JSON.stringify(serviceData.slice(0, 3), null, 2));
+    }
 
     const serviceRangeMap = new Map<string, number>();
     const serviceRanges = ['< 1 year', '1-2 years', '3-4 years', '5-9 years', '10-14 years', '15-19 years', '20+ years'];
@@ -123,15 +141,23 @@ export async function GET(request: Request) {
     let skippedCount = 0;
 
     serviceData.forEach(item => {
-      if (item.remark && item.remark.trim() !== '') {
-        const years = parseServiceYears(item.remark);
-        if (years >= 0) {
-          const range = getServiceRange(years);
-          serviceRangeMap.set(range, (serviceRangeMap.get(range) || 0) + 1);
-          processedCount++;
-        } else {
-          skippedCount++;
+      // Try multiple columns in order of priority
+      const serviceFields = [item.nilai, item.remark, item.remark2, item.remark3];
+      
+      let years = 0;
+      for (const field of serviceFields) {
+        if (field && field.trim() !== '' && field.toLowerCase() !== 'information' && field.toLowerCase() !== 'prior') {
+          years = parseServiceYears(field);
+          if (years > 0) {
+            break; // Found valid years, stop checking other fields
+          }
         }
+      }
+      
+      if (years > 0) {
+        const range = getServiceRange(years);
+        serviceRangeMap.set(range, (serviceRangeMap.get(range) || 0) + 1);
+        processedCount++;
       } else {
         skippedCount++;
       }

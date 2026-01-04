@@ -22,7 +22,13 @@ function getMonthName(monthNum: string): string {
 function calculateAge(birthDate: string): number {
   try {
     const cleanedDate = birthDate.trim();
-    console.log('Calculating age for:', cleanedDate); // Debug log
+    
+    // Skip if it's "Information" or other placeholder text
+    if (cleanedDate.toLowerCase() === 'information' || 
+        cleanedDate.toLowerCase() === 'prior' ||
+        cleanedDate.length < 8) {
+      return 0;
+    }
     
     let date: Date;
     
@@ -41,7 +47,7 @@ function calculateAge(birthDate: string): number {
         date = new Date(cleanedDate);
       }
     } 
-    // Handle format: "22/11/1995" or "22-11-1995"
+    // Handle format: "22/11/1995" or "DD/MM/YYYY"
     else if (cleanedDate.includes('/')) {
       const parts = cleanedDate.split('/');
       if (parts.length === 3) {
@@ -58,7 +64,6 @@ function calculateAge(birthDate: string): number {
     }
     
     if (isNaN(date.getTime())) {
-      console.log('Invalid date:', cleanedDate);
       return 0;
     }
     
@@ -72,14 +77,11 @@ function calculateAge(birthDate: string): number {
     
     // Validate age range (18-100)
     if (age < 18 || age > 100) {
-      console.log('Age out of range:', age, 'for date:', cleanedDate);
       return 0;
     }
     
-    console.log('Calculated age:', age); // Debug log
     return age;
-  } catch (error) {
-    console.error('Error calculating age:', error);
+  } catch  {
     return 0;
   }
 }
@@ -135,17 +137,26 @@ export async function GET(request: Request) {
     console.time('Query-Age');
     console.log('WHERE condition:', JSON.stringify(whereCondition, null, 2));
     
+    // Fetch all possible columns that might contain birth date
     const birthDates = await prisma.employeeComponent.findMany({
       where: whereCondition,
       select: {
         employeeNo: true,
+        nilai: true,   // This might contain the actual date
         remark: true,
+        remark2: true,
+        remark3: true,
       },
       distinct: ['employeeNo'],
     });
     
     console.timeEnd('Query-Age');
     console.log('Total birth date records fetched:', birthDates.length);
+    
+    // Debug: Log first 3 records to see the data structure
+    if (birthDates.length > 0) {
+      console.log('Sample records:', JSON.stringify(birthDates.slice(0, 3), null, 2));
+    }
 
     const ageRangeMap = new Map<string, number>();
     const ageRanges = ['< 25', '25-29', '30-34', '35-39', '40-44', '45-49', '50-54', '55-59', '60+'];
@@ -156,15 +167,23 @@ export async function GET(request: Request) {
     let skippedCount = 0;
 
     birthDates.forEach(item => {
-      if (item.remark && item.remark.trim() !== '') {
-        const age = calculateAge(item.remark);
-        if (age > 0) {
-          const range = getAgeRange(age);
-          ageRangeMap.set(range, (ageRangeMap.get(range) || 0) + 1);
-          processedCount++;
-        } else {
-          skippedCount++;
+      // Try multiple columns in order of priority
+      const dateFields = [item.nilai, item.remark, item.remark2, item.remark3];
+      
+      let age = 0;
+      for (const field of dateFields) {
+        if (field && field.trim() !== '' && field.toLowerCase() !== 'information') {
+          age = calculateAge(field);
+          if (age > 0) {
+            break; // Found valid age, stop checking other fields
+          }
         }
+      }
+      
+      if (age > 0) {
+        const range = getAgeRange(age);
+        ageRangeMap.set(range, (ageRangeMap.get(range) || 0) + 1);
+        processedCount++;
       } else {
         skippedCount++;
       }
