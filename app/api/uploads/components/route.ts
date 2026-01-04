@@ -307,38 +307,61 @@ export async function GET(_request: NextRequest) {
 // Add this new endpoint for real-time progress
 export async function PUT(request: NextRequest) {
   const encoder = new TextEncoder();
+  let filePath: string | null = null;
   
   const stream = new ReadableStream({
     async start(controller) {
       try {
         const user = await requireAuth();
-        const body = await request.json();
-        const { fileUrl, filePath: uploadedPath, fileName, fileSize, type } = body;
+        const requestBody = await request.json();
+        const { fileUrl, filePath: uploadedPath, fileName, fileSize, type } = requestBody;
+        
+        filePath = uploadedPath;
 
-        // Send progress updates
         const sendProgress = (phase: string, message: string, percentage: number) => {
           const data = JSON.stringify({ phase, message, percentage });
           controller.enqueue(encoder.encode(`data: ${data}\n\n`));
+          console.log(`[SSE Progress] ${phase}: ${percentage}% - ${message}`);
         };
 
         sendProgress('preparing', 'Downloading file from storage...', 5);
 
-        // Download file
-        const { data: fileBlob } = await storageHelpers.downloadFileAdmin(
+        const { data: fileBlob, error: downloadError } = await storageHelpers.downloadFileAdmin(
           STORAGE_BUCKETS.PAYROLL_COMPONENTS,
           uploadedPath
         );
 
+        if (downloadError || !fileBlob) {
+          throw new Error(`Failed to download file: ${downloadError}`);
+        }
+
         sendProgress('preparing', 'Parsing file data...', 15);
 
-        const arrayBuffer = await fileBlob!.arrayBuffer();
+        const arrayBuffer = await fileBlob.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
 
-        // Parse file (sama seperti POST)
-        const rows: any[] = [];
-        // ... parsing code ...
+        let rows: any[] = [];
 
-        sendProgress('processing', 'Validating data...', 25);
+        if (fileName.endsWith(".csv")) {
+          const content = buffer.toString("utf-8");
+          const parseResult = parse(content, {
+            header: true,
+            skipEmptyLines: true,
+            transformHeader: (header: string) => header.trim(),
+          });
+          rows = parseResult.data as any[];
+        } else if (fileName.endsWith(".xlsx") || fileName.endsWith(".xls")) {
+          const workbook = XLSX.read(buffer, { type: "buffer" });
+          const sheetName = workbook.SheetNames[0];
+          const sheet = workbook.Sheets[sheetName];
+          rows = XLSX.utils.sheet_to_json(sheet);
+        }
+
+        if (rows.length === 0) {
+          throw new Error("File is empty");
+        }
+
+        sendProgress('processing', 'Validating data...', 20);
 
         const validRows = rows.filter(row => {
           const employeeNo = String(row["Employee No"] || "").trim();
@@ -346,6 +369,11 @@ export async function PUT(request: NextRequest) {
           const bulanReport = String(row["Bulan Report"] || "").trim();
           return employeeNo && komponen && bulanReport;
         });
+
+        if (validRows.length === 0) {
+          throw new Error("No valid rows found");
+        }
+
         const componentsData = validRows.map((row) => ({
           employeeNo: String(row["Employee No"]).trim(),
           komponen: String(row["Komponen"]).trim(),
@@ -361,7 +389,8 @@ export async function PUT(request: NextRequest) {
         const totalChunks = Math.ceil(componentsData.length / CHUNK_SIZE);
         let totalInserted = 0;
 
-        // Process chunks with progress updates
+        sendProgress('processing', `Starting batch insert (${totalChunks} chunks)...`, 25);
+
         for (let i = 0; i < componentsData.length; i += CHUNK_SIZE) {
           const chunk = componentsData.slice(i, i + CHUNK_SIZE);
           const chunkNumber = Math.floor(i / CHUNK_SIZE) + 1;
@@ -369,29 +398,43 @@ export async function PUT(request: NextRequest) {
           const result = await insertWithRetry(chunk);
           totalInserted += result.count;
 
-          // Calculate progress (25% to 95%)
           const progressPercent = 25 + Math.round((chunkNumber / totalChunks) * 70);
           
           sendProgress(
             'processing',
-            `Processing chunk ${chunkNumber}/${totalChunks}... (${totalInserted}/${componentsData.length} rows)`,
+            `Chunk ${chunkNumber}/${totalChunks} • ${totalInserted.toLocaleString()}/${componentsData.length.toLocaleString()} rows`,
             progressPercent
           );
         }
 
-        sendProgress('completed', 'Upload completed!', 100);
+        sendProgress('completed', 'Upload completed successfully!', 100);
 
         controller.enqueue(encoder.encode(`data: ${JSON.stringify({
           success: true,
           count: totalInserted,
-          total: componentsData.length
+          total: componentsData.length,
+          skipped: componentsData.length - totalInserted,
+          type: type
         })}\n\n`));
 
         controller.close();
+
       } catch (error) {
+        console.error("[Upload PUT] Error:", error);
+        const errorMsg = error instanceof Error ? error.message : 'Upload failed';
+        
         controller.enqueue(encoder.encode(`data: ${JSON.stringify({
-          error: error instanceof Error ? error.message : 'Upload failed'
+          phase: 'error',
+          error: errorMsg
         })}\n\n`));
+        
+        if (filePath) {
+          await storageHelpers.deleteFilesAdmin(
+            STORAGE_BUCKETS.PAYROLL_COMPONENTS,
+            [filePath]
+          ).catch(err => console.error("Cleanup error:", err));
+        }
+        
         controller.close();
       }
     }

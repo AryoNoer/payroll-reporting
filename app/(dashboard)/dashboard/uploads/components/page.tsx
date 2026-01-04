@@ -191,26 +191,30 @@ export default function UploadComponentsPage() {
         if (done) break;
 
         const chunk = decoder.decode(value);
-        const lines = chunk.split("\n");
+        const lines = chunk.split("\n").filter((line) => line.trim());
 
         for (const line of lines) {
           if (line.startsWith("data: ")) {
-            const data = JSON.parse(line.slice(6));
+            try {
+              const data = JSON.parse(line.slice(6));
 
-            if (data.error) {
-              throw new Error(data.error);
-            }
+              if (data.error || data.phase === "error") {
+                throw new Error(data.error || "Upload failed");
+              }
 
-            if (data.phase) {
-              setProgress({
-                phase: data.phase,
-                message: data.message,
-                percentage: data.percentage,
-              });
-            }
+              if (data.phase) {
+                setProgress({
+                  phase: data.phase,
+                  message: data.message,
+                  percentage: data.percentage,
+                });
+              }
 
-            if (data.success) {
-              finalResult = data;
+              if (data.success) {
+                finalResult = data;
+              }
+            } catch (parseError) {
+              console.error("Failed to parse SSE data:", line, parseError);
             }
           }
         }
