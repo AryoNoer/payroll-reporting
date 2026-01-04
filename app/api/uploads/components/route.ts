@@ -9,25 +9,36 @@ import * as XLSX from "xlsx";
 import { storageHelpers, STORAGE_BUCKETS } from "@/lib/supabase";
 import { Readable } from "stream";
 
-const CHUNK_SIZE = 6000;
+const CHUNK_SIZE = 3000; // Balanced for production
 const MAX_FILE_SIZE = 500 * 1024 * 1024;
-const BATCH_INSERT_SIZE = 5000; // Insert 1000 rows at a time
+const BATCH_INSERT_SIZE = 3000; // MUST match CHUNK_SIZE
 
 // ✅ Memory-safe batch insert
+// ✅ Memory-safe batch insert with better timeout
 async function insertBatch(batch: any[]) {
   if (batch.length === 0) return { count: 0 };
   
   try {
-    const result = await prisma.employeeComponent.createMany({
-      data: batch,
-      skipDuplicates: true,
-    });
+    const result = await prisma.$transaction(
+      async (tx) => {
+        return await tx.employeeComponent.createMany({
+          data: batch,
+          skipDuplicates: true,
+        });
+      },
+      {
+        maxWait: 15000, // 15 seconds wait
+        timeout: 180000, // 3 minutes timeout for large batches
+      }
+    );
+    
     return result;
   } catch (error: any) {
     console.error(`❌ Batch insert error:`, error.message);
     
     // Retry with smaller batches if failed
     if (batch.length > 100) {
+      console.log(`⚠️ Retrying with smaller sub-batches...`);
       let count = 0;
       for (let i = 0; i < batch.length; i += 100) {
         const smallBatch = batch.slice(i, i + 100);
@@ -37,8 +48,9 @@ async function insertBatch(batch: any[]) {
             skipDuplicates: true,
           });
           count += result.count;
+          await new Promise(resolve => setTimeout(resolve, 50));
         } catch (err) {
-          console.error(`Sub-batch failed, skipping...`);
+          console.error(`Sub-batch ${i}-${i+100} failed, skipping...`);
         }
       }
       return { count };
@@ -390,14 +402,20 @@ export async function PUT(request: NextRequest) {
 
         sendProgress('completed', 'Upload completed!', 100);
 
-        controller.enqueue(encoder.encode(`data: ${JSON.stringify({
+        // ✅ Send final result with explicit success flag
+        const finalResult = {
           success: true,
           count: totalInserted,
           total: componentsData.length,
           skipped: componentsData.length - totalInserted,
           type: type
-        })}\n\n`));
-
+        };
+        
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(finalResult)}\n\n`));
+        
+        // ✅ Small delay before closing to ensure data is sent
+        await new Promise(resolve => setTimeout(resolve, 100));
+        
         controller.close();
 
       } catch (error) {

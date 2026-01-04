@@ -159,7 +159,7 @@ export default function UploadComponentsPage() {
 
       // Step 2: Process with SSE for real-time progress
       const response = await fetch("/api/uploads/components", {
-        method: "PUT", // Use PUT for streaming
+        method: "PUT",
         headers: {
           "Content-Type": "application/json",
         },
@@ -173,7 +173,7 @@ export default function UploadComponentsPage() {
       });
 
       if (!response.ok) {
-        throw new Error("Failed to process file");
+        throw new Error(`Server error: ${response.status}`);
       }
 
       const reader = response.body?.getReader();
@@ -184,24 +184,33 @@ export default function UploadComponentsPage() {
       }
 
       let finalResult: any = null;
+      let buffer = ""; // ✅ Buffer for incomplete chunks
 
       // Read stream
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
 
-        const chunk = decoder.decode(value);
-        const lines = chunk.split("\n").filter((line) => line.trim());
+        const chunk = decoder.decode(value, { stream: true });
+        buffer += chunk; // ✅ Accumulate chunks
+
+        // ✅ Process complete lines
+        const lines = buffer.split("\n");
+        buffer = lines.pop() || ""; // Keep incomplete line in buffer
 
         for (const line of lines) {
+          if (!line.trim()) continue;
+
           if (line.startsWith("data: ")) {
             try {
               const data = JSON.parse(line.slice(6));
 
+              // ✅ Handle error
               if (data.error || data.phase === "error") {
                 throw new Error(data.error || "Upload failed");
               }
 
+              // ✅ Update progress
               if (data.phase) {
                 setProgress({
                   phase: data.phase,
@@ -210,8 +219,10 @@ export default function UploadComponentsPage() {
                 });
               }
 
-              if (data.success) {
+              // ✅ Capture final result (has success flag)
+              if (data.success === true && data.count !== undefined) {
                 finalResult = data;
+                console.log("✅ Final result received:", finalResult);
               }
             } catch (parseError) {
               console.error("Failed to parse SSE data:", line, parseError);
@@ -220,8 +231,25 @@ export default function UploadComponentsPage() {
         }
       }
 
+      // ✅ Process remaining buffer
+      if (buffer.trim() && buffer.startsWith("data: ")) {
+        try {
+          const data = JSON.parse(buffer.slice(6));
+          if (data.success === true && data.count !== undefined) {
+            finalResult = data;
+            console.log("✅ Final result from buffer:", finalResult);
+          }
+        } catch (e) {
+          console.error("Failed to parse final buffer:", e);
+        }
+      }
+
+      // ✅ Better error handling if no result
       if (!finalResult) {
-        throw new Error("Upload completed but no result received");
+        console.error("❌ No final result received from server");
+        throw new Error(
+          "Upload completed but no result received. Please check server logs."
+        );
       }
 
       // Show success modal
@@ -237,13 +265,13 @@ export default function UploadComponentsPage() {
         }
       );
     } catch (err) {
+      console.error("Upload error:", err);
       setProgress(null);
       showModal(
         "error",
         "Upload Failed",
-        err instanceof Error ? err.message : "An error occurred"
+        err instanceof Error ? err.message : "An error occurred during upload"
       );
-      console.error(err);
     } finally {
       setUploading(false);
     }
