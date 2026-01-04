@@ -32,6 +32,11 @@ const navigation = [
         href: "/dashboard/uploads/components",
         icon: Upload,
       }, // ← TAMBAH INI
+      {
+        name: "Run Data Components",
+        href: "/dashboard/uploads/process",
+        icon: Upload,
+      },
     ],
   },
   { name: "Settings", href: "/dashboard/settings", icon: Settings },
