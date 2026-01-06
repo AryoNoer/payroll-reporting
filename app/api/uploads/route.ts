@@ -98,7 +98,7 @@ export async function POST(request: NextRequest) {
     const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
       .from(STORAGE_BUCKET)
       .upload(storagePath, fileBuffer, {
-        contentType: file.type || 'text/csv',
+        contentType: 'text/csv',
         cacheControl: '3600',
         upsert: false,
       });
