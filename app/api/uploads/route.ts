@@ -56,11 +56,36 @@ export async function GET() {
       orderBy: { uploadedAt: "desc" },
       take: 20,
     });
-    return NextResponse.json(uploads);
+    return NextResponse.json(uploads, {
+      headers: corsHeaders()
+    });
   } catch (error) {
     console.error("[GET /api/uploads] Error:", error);
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    return NextResponse.json(
+      { error: "Unauthorized" }, 
+      { 
+        status: 401,
+        headers: corsHeaders()
+      }
+    );
   }
+}
+// Add this helper at the top
+function corsHeaders() {
+  return {
+    'Access-Control-Allow-Origin': process.env.NEXTAUTH_URL || '*',
+    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
+    'Access-Control-Allow-Credentials': 'true',
+  };
+}
+
+// Add OPTIONS handler
+export async function OPTIONS() {
+  return NextResponse.json({}, { 
+    status: 200,
+    headers: corsHeaders()
+  });
 }
 
 export async function POST(request: NextRequest) {
@@ -422,6 +447,8 @@ if (meta.fields && meta.fields.length === 1) {
         duplicateCount: existingEmployees.length,
         message: `${existingEmployees.length} employees already exist for this period and will be skipped`
       } : undefined
+    }, {
+      headers: corsHeaders()
     });
 
   } catch (error) {
@@ -437,7 +464,9 @@ if (meta.fields && meta.fields.length === 1) {
           code: error.code,
           details: error.details
         },
-        { status: 400 }
+        { status: 400, 
+          headers: corsHeaders()
+        }
       );
     }
 
@@ -446,7 +475,9 @@ if (meta.fields && meta.fields.length === 1) {
         error: "Failed to upload file", 
         message: error instanceof Error ? error.message : "Unknown error"
       },
-      { status: 500 }
+      { status: 500 
+      , headers: corsHeaders()
+      }
     );
   }
 }
