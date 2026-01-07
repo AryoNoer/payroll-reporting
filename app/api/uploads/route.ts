@@ -8,6 +8,7 @@ import { parse } from "papaparse";
 import { applyCalculationsAndDerivations } from "@/lib/field-calculations";
 import { createClient } from '@supabase/supabase-js';
 
+
 // Create Supabase ADMIN client with SERVICE_ROLE key (bypasses RLS)
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
 const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
@@ -47,7 +48,22 @@ const TEXT_ONLY_FIELDS = new Set([
 
 const BATCH_SIZE = 100;
 
-// CORS headers helper
+export async function GET() {
+  try {
+    const user = await requireAuth();
+    const uploads = await prisma.upload.findMany({
+      where: { userId: user.id },
+      orderBy: { uploadedAt: "desc" },
+      take: 20,
+    });
+    return NextResponse.json(uploads);
+  } catch (error) {
+    console.error("[GET /api/uploads] Error:", error);
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+}
+
+// Add this helper at the top
 function corsHeaders() {
   return {
     'Access-Control-Allow-Origin': process.env.NEXTAUTH_URL || '*',
@@ -57,7 +73,7 @@ function corsHeaders() {
   };
 }
 
-// OPTIONS handler for CORS
+// Add OPTIONS handler
 export async function OPTIONS() {
   return NextResponse.json({}, { 
     status: 200,
@@ -65,59 +81,67 @@ export async function OPTIONS() {
   });
 }
 
-export async function GET() {
-  try {
-    const user = await requireAuth();
-    const uploads = await prisma.upload.findMany({
-      where: { userId: user.id },
-      orderBy: { uploadedAt: "desc" },
-      take: 20,
-    });
-    return NextResponse.json(uploads, {
-      headers: corsHeaders()
-    });
-  } catch (error) {
-    console.error("[GET /api/uploads] Error:", error);
-    return NextResponse.json(
-      { error: "Unauthorized" }, 
-      { 
-        status: 401,
-        headers: corsHeaders()
-      }
-    );
-  }
-}
-
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
-  console.log("\n=== UPLOAD REQUEST STARTED ===");
+  console.log("\n=== UPLOAD REQUEST STARTED (BACKEND STORAGE) ===");
   
   try {
     // Step 1: Authenticate user
     console.log("[Step 1] Authenticating user...");
     const user = await requireAuth();
-    console.log(`✅ User authenticated: ${user.email}`);
+    console.log(`✓ User authenticated: ${user.email}`);
 
-    // Step 2: Parse JSON body (file already uploaded to Supabase from client)
-    console.log("[Step 2] Parsing request body...");
-    const body = await request.json();
-    const { storagePath, fileName, fileSize, period } = body;
+    // Step 2: Parse form data
+    console.log("[Step 2] Parsing form data...");
+    const formData = await request.formData();
+    const file = formData.get("file") as File;
+    const period = formData.get("period") as string;
 
-    if (!storagePath || !fileName || !period) {
-      throw new UploadError("Missing required fields", "MISSING_FIELDS");
+    if (!file) {
+      throw new UploadError("File is required", "MISSING_FILE");
+    }
+    if (!period) {
+      throw new UploadError("Period is required", "MISSING_PERIOD");
     }
 
-    console.log(`✅ File: ${fileName} (${(fileSize / (1024 * 1024)).toFixed(2)} MB)`);
-    console.log(`✅ Storage path: ${storagePath}`);
-    console.log(`✅ Period: ${period}`);
+    console.log(`✓ File: ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB)`);
+    console.log(`✓ Period: ${period}`);
 
-    // Step 3: Download file from storage for processing
-    console.log("[Step 3] Downloading file from storage...");
+    // Step 3: Upload to Supabase Storage (BACKEND with service_role - bypasses RLS)
+    console.log("[Step 3] Uploading to Supabase Storage...");
+    const timestamp = Date.now();
+    const sanitizedFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+    const storagePath = `payroll/${timestamp}-${sanitizedFileName}`;
+
+    const fileBuffer = await file.arrayBuffer();
+    const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
+      .from(STORAGE_BUCKET)
+      .upload(storagePath, fileBuffer, {
+        contentType: file.type || 'text/csv',
+        cacheControl: '3600',
+        upsert: false,
+      });
+
+    if (uploadError) {
+      console.error("❌ Storage upload error:", uploadError);
+      throw new UploadError(
+        `Storage upload failed: ${uploadError.message}`,
+        "STORAGE_UPLOAD_ERROR",
+        uploadError
+      );
+    }
+
+    console.log(`✓ File uploaded to storage: ${storagePath}`);
+
+    // Step 4: Download file from storage for processing
+    console.log("[Step 4] Downloading file from storage...");
     const { data: fileData, error: downloadError } = await supabaseAdmin.storage
       .from(STORAGE_BUCKET)
       .download(storagePath);
 
     if (downloadError || !fileData) {
+      // Clean up uploaded file
+      await supabaseAdmin.storage.from(STORAGE_BUCKET).remove([storagePath]);
       throw new UploadError(
         `Failed to download file: ${downloadError?.message}`,
         "STORAGE_DOWNLOAD_ERROR"
@@ -126,22 +150,22 @@ export async function POST(request: NextRequest) {
 
     // Convert Blob to text
     let content = await fileData.text();
-    console.log(`✅ File downloaded: ${content.length} characters`);
+    console.log(`✓ File downloaded: ${content.length} characters`);
 
-    // Step 4: Process file content
-    console.log("[Step 4] Processing file content...");
+    // Step 5: Process file content
+    console.log("[Step 5] Processing file content...");
     
     // Handle BOM
     if (content.charCodeAt(0) === 0xFEFF) {
       content = content.substring(1);
-      console.log('  ⚠️ Removed UTF-8 BOM');
+      console.log('  ⚠ Removed UTF-8 BOM');
     }
     
     // Normalize line endings
     content = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
 
-    // Step 5: Handle double header rows
-    console.log("[Step 5] Detecting header structure...");
+    // Step 6: Handle double header rows
+    console.log("[Step 6] Detecting header structure...");
     const lines = content.split('\n');
     let finalContent = content;
     
@@ -162,7 +186,7 @@ export async function POST(request: NextRequest) {
         secondLine.includes('Employee');
       
       if (hasCategories && secondLineHasNames) {
-        console.log('✅ Detected double header format, merging...');
+        console.log('✓ Detected double header format, merging...');
         
         const categoryParse = parse(firstLine, { header: false });
         const fieldParse = parse(secondLine, { header: false });
@@ -185,123 +209,129 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Step 6: Parse CSV with delimiter detection
-    console.log("[Step 6] Parsing CSV...");
+    // Step 7: Parse CSV with better delimiter detection
+console.log("[Step 7] Parsing CSV...");
 
-    // Detect delimiter by checking first line
-    const firstLine = finalContent.split('\n')[0] || '';
-    let detectedDelimiter = ',';
+// Remove BOM if present
+if (content.charCodeAt(0) === 0xFEFF) {
+  content = content.substring(1);
+  console.log('  ⚠ Removed UTF-8 BOM');
+}
 
-    const commaCount = (firstLine.match(/,/g) || []).length;
-    const semicolonCount = (firstLine.match(/;/g) || []).length;
-    const tabCount = (firstLine.match(/\t/g) || []).length;
-    const pipeCount = (firstLine.match(/\|/g) || []).length;
+// Detect delimiter by checking first line
+const firstLine = finalContent.split('\n')[0] || '';
+let detectedDelimiter = ',';
 
-    console.log('Delimiter detection:', {
-      commas: commaCount,
-      semicolons: semicolonCount,
-      tabs: tabCount,
-      pipes: pipeCount,
+const commaCount = (firstLine.match(/,/g) || []).length;
+const semicolonCount = (firstLine.match(/;/g) || []).length;
+const tabCount = (firstLine.match(/\t/g) || []).length;
+const pipeCount = (firstLine.match(/\|/g) || []).length;
+
+console.log('Delimiter detection:', {
+  commas: commaCount,
+  semicolons: semicolonCount,
+  tabs: tabCount,
+  pipes: pipeCount,
+});
+
+if (semicolonCount > commaCount) {
+  detectedDelimiter = ';';
+  console.log('✓ Detected delimiter: semicolon (;)');
+} else if (tabCount > commaCount) {
+  detectedDelimiter = '\t';
+  console.log('✓ Detected delimiter: tab (\\t)');
+} else if (pipeCount > commaCount) {
+  detectedDelimiter = '|';
+  console.log('✓ Detected delimiter: pipe (|)');
+} else {
+  console.log('✓ Detected delimiter: comma (,)');
+}
+
+// Parse with detected delimiter
+const parseResult = parse(finalContent, {
+  header: true,
+  delimiter: detectedDelimiter, // Use detected delimiter
+  skipEmptyLines: true,
+  newline: '\n',
+  quoteChar: '"',
+  escapeChar: '"',
+  transformHeader: (header: string, index: number) => {
+    const cleanHeader = header.trim();
+    return !cleanHeader ? `Column_${index}` : cleanHeader;
+  },
+  transform: (value: string) => value?.trim() || "",
+});
+
+const { data, errors, meta } = parseResult;
+
+console.log(`✓ CSV parsed: ${(data as any[]).length} rows, ${meta.fields?.length || 0} columns`);
+
+// Log first few column names for debugging
+if (meta.fields && meta.fields.length > 0) {
+  console.log('First 10 columns:', meta.fields.slice(0, 10));
+}
+
+// Enhanced error reporting
+if (errors.length > 0) {
+  console.error(`❌ CSV Parse Errors: ${errors.length}`);
+  
+  // Log first few errors for debugging
+  console.error('First 5 errors:');
+  errors.slice(0, 5).forEach((err: any, idx: number) => {
+    console.error(`  ${idx + 1}. Row ${err.row}: ${err.code} - ${err.message}`);
+  });
+  
+  // Only fail if there are critical errors
+  const criticalErrors = errors.filter((e: any) => 
+    e.code === 'TooManyFields' || 
+    e.code === 'TooFewFields' ||
+    e.code === 'MissingQuotes'
+  );
+  
+  if (criticalErrors.length > 0) {
+    await supabaseAdmin.storage.from(STORAGE_BUCKET).remove([storagePath]);
+    
+    let errorMessage = "CSV parsing failed";
+    if (criticalErrors[0].code === "TooManyFields") {
+      errorMessage = `CSV format error: File has inconsistent columns. Some rows have more fields than headers.`;
+    } else if (criticalErrors[0].code === "TooFewFields") {
+      errorMessage = `CSV format error: File has inconsistent columns. Some rows have fewer fields than headers.`;
+    }
+    
+    throw new UploadError(errorMessage, "PARSE_ERROR", { 
+      totalErrors: criticalErrors.length,
+      sampleErrors: criticalErrors.slice(0, 5).map((e: any) => ({
+        row: e.row,
+        code: e.code,
+        message: e.message
+      }))
     });
+  } else {
+    console.warn(`⚠ Non-critical parse errors: ${errors.length}, continuing...`);
+  }
+}
 
-    if (semicolonCount > commaCount) {
-      detectedDelimiter = ';';
-      console.log('✅ Detected delimiter: semicolon (;)');
-    } else if (tabCount > commaCount) {
-      detectedDelimiter = '\t';
-      console.log('✅ Detected delimiter: tab (\\t)');
-    } else if (pipeCount > commaCount) {
-      detectedDelimiter = '|';
-      console.log('✅ Detected delimiter: pipe (|)');
-    } else {
-      console.log('✅ Detected delimiter: comma (,)');
+if (!data || (data as any[]).length === 0) {
+  await supabaseAdmin.storage.from(STORAGE_BUCKET).remove([storagePath]);
+  throw new UploadError("CSV file is empty", "EMPTY_FILE");
+}
+
+// Validate we got multiple columns (not just 1)
+if (meta.fields && meta.fields.length === 1) {
+  await supabaseAdmin.storage.from(STORAGE_BUCKET).remove([storagePath]);
+  throw new UploadError(
+    `CSV parsing error: Only 1 column detected. Please check your CSV format and delimiter. Detected delimiter: ${detectedDelimiter}`,
+    "INVALID_FORMAT",
+    {
+      detectedColumns: meta.fields,
+      detectedDelimiter,
+      suggestion: "Your CSV might be using a different delimiter (semicolon, tab, or pipe). Please check your export settings."
     }
+  );
+}
 
-    // Parse with detected delimiter
-    const parseResult = parse(finalContent, {
-      header: true,
-      delimiter: detectedDelimiter,
-      skipEmptyLines: true,
-      newline: '\n',
-      quoteChar: '"',
-      escapeChar: '"',
-      transformHeader: (header: string, index: number) => {
-        const cleanHeader = header.trim();
-        return !cleanHeader ? `Column_${index}` : cleanHeader;
-      },
-      transform: (value: string) => value?.trim() || "",
-    });
-
-    const { data, errors, meta } = parseResult;
-
-    console.log(`✅ CSV parsed: ${(data as any[]).length} rows, ${meta.fields?.length || 0} columns`);
-
-    // Log first few column names for debugging
-    if (meta.fields && meta.fields.length > 0) {
-      console.log('First 10 columns:', meta.fields.slice(0, 10));
-    }
-
-    // Enhanced error reporting
-    if (errors.length > 0) {
-      console.error(`❌ CSV Parse Errors: ${errors.length}`);
-      
-      // Log first few errors for debugging
-      console.error('First 5 errors:');
-      errors.slice(0, 5).forEach((err: any, idx: number) => {
-        console.error(`  ${idx + 1}. Row ${err.row}: ${err.code} - ${err.message}`);
-      });
-      
-      // Only fail if there are critical errors
-      const criticalErrors = errors.filter((e: any) => 
-        e.code === 'TooManyFields' || 
-        e.code === 'TooFewFields' ||
-        e.code === 'MissingQuotes'
-      );
-      
-      if (criticalErrors.length > 0) {
-        await supabaseAdmin.storage.from(STORAGE_BUCKET).remove([storagePath]);
-        
-        let errorMessage = "CSV parsing failed";
-        if (criticalErrors[0].code === "TooManyFields") {
-          errorMessage = `CSV format error: File has inconsistent columns. Some rows have more fields than headers.`;
-        } else if (criticalErrors[0].code === "TooFewFields") {
-          errorMessage = `CSV format error: File has inconsistent columns. Some rows have fewer fields than headers.`;
-        }
-        
-        throw new UploadError(errorMessage, "PARSE_ERROR", { 
-          totalErrors: criticalErrors.length,
-          sampleErrors: criticalErrors.slice(0, 5).map((e: any) => ({
-            row: e.row,
-            code: e.code,
-            message: e.message
-          }))
-        });
-      } else {
-        console.warn(`⚠️ Non-critical parse errors: ${errors.length}, continuing...`);
-      }
-    }
-
-    if (!data || (data as any[]).length === 0) {
-      await supabaseAdmin.storage.from(STORAGE_BUCKET).remove([storagePath]);
-      throw new UploadError("CSV file is empty", "EMPTY_FILE");
-    }
-
-    // Validate we got multiple columns (not just 1)
-    if (meta.fields && meta.fields.length === 1) {
-      await supabaseAdmin.storage.from(STORAGE_BUCKET).remove([storagePath]);
-      throw new UploadError(
-        `CSV parsing error: Only 1 column detected. Please check your CSV format and delimiter. Detected delimiter: ${detectedDelimiter}`,
-        "INVALID_FORMAT",
-        {
-          detectedColumns: meta.fields,
-          detectedDelimiter,
-          suggestion: "Your CSV might be using a different delimiter (semicolon, tab, or pipe). Please check your export settings."
-        }
-      );
-    }
-
-    // Step 7: Validate headers
-    console.log("[Step 7] Validating CSV structure...");
+    // Step 8: Validate headers
+    console.log("[Step 8] Validating CSV structure...");
     const requiredColumns = ["Name", "Employee No"];
     const headers = Object.keys((data as any[])[0]);
     const missingColumns = requiredColumns.filter(
@@ -317,8 +347,8 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Step 8: Check for duplicates WITHIN the file
-    console.log("[Step 8] Checking for duplicate Employee No in file...");
+    // Step 9: Check for duplicates WITHIN the file
+    console.log("[Step 9] Checking for duplicate Employee No in file...");
     const employeeNosInFile = new Set<string>();
     const duplicatesInFile: string[] = [];
     
@@ -346,10 +376,10 @@ export async function POST(request: NextRequest) {
         }
       );
     }
-    console.log(`✅ No duplicates within file`);
+    console.log(`✓ No duplicates within file`);
 
-    // Step 9: Check for duplicates with SAME PERIOD
-    console.log("[Step 9] Checking for duplicates with same period...");
+    // Step 10: Check for duplicates with SAME PERIOD
+    console.log("[Step 10] Checking for duplicates with same period...");
     const uploadPeriod = new Date(period + "-01");
     
     const existingEmployees = await prisma.employee.findMany({
@@ -373,35 +403,35 @@ export async function POST(request: NextRequest) {
     });
 
     if (existingEmployees.length > 0) {
-      console.warn(`⚠️ Found ${existingEmployees.length} employees already exist for period ${period}`);
+      console.warn(`⚠ Found ${existingEmployees.length} employees already exist for period ${period}`);
       console.log(`  Will skip these ${existingEmployees.length} duplicate employees during insert`);
     } else {
-      console.log(`✅ No duplicates with same period found`);
+      console.log(`✓ No duplicates with same period found`);
     }
 
-    // Step 10: Create database record
-    console.log("[Step 10] Creating upload record...");
+    // Step 11: Create database record
+    console.log("[Step 11] Creating upload record...");
     const upload = await prisma.upload.create({
       data: {
-        fileName: storagePath,
-        originalName: fileName,
-        fileSize: fileSize,
+        fileName: storagePath, // Store storage path
+        originalName: file.name,
+        fileSize: file.size,
         rowCount: (data as any[]).length,
         period: uploadPeriod,
         status: "PROCESSING",
         userId: user.id,
       },
     });
-    console.log(`✅ Upload record created: ${upload.id}`);
+    console.log(`✓ Upload record created: ${upload.id}`);
 
-    // Step 11: Start background processing
-    console.log("[Step 11] Starting background processing...");
+    // Step 12: Start background processing
+    console.log("[Step 12] Starting background processing...");
     processUploadData(upload.id, data as any[], headers).catch((error) => {
       console.error("❌ Background processing error:", error);
     });
 
     const duration = Date.now() - startTime;
-    console.log(`✅ Upload completed in ${duration}ms`);
+    console.log(`✓ Upload completed in ${duration}ms`);
     console.log("=== UPLOAD REQUEST COMPLETED ===\n");
 
     return NextResponse.json({
@@ -427,8 +457,7 @@ export async function POST(request: NextRequest) {
           code: error.code,
           details: error.details
         },
-        { 
-          status: 400, 
+        { status: 400, 
           headers: corsHeaders()
         }
       );
@@ -439,9 +468,8 @@ export async function POST(request: NextRequest) {
         error: "Failed to upload file", 
         message: error instanceof Error ? error.message : "Unknown error"
       },
-      { 
-        status: 500,
-        headers: corsHeaders()
+      { status: 500 
+      , headers: corsHeaders()
       }
     );
   }
@@ -496,7 +524,7 @@ async function processUploadData(
     const components = await prisma.component.findMany({
       where: { isActive: true },
     });
-    console.log(`✅ Loaded ${components.length} components\n`);
+    console.log(`✓ Loaded ${components.length} components\n`);
 
     const componentMap = new Map(components.map(c => [c.name, c]));
 
@@ -690,7 +718,7 @@ async function processUploadData(
         duplicateCount += skippedInBatch;
         
         const batchDuration = Date.now() - batchStartTime;
-        console.log(`  ✅ Inserted ${actualInserted} rows, skipped ${skippedInBatch} duplicates in ${batchDuration}ms`);
+        console.log(`  ✓ Inserted ${actualInserted} rows, skipped ${skippedInBatch} duplicates in ${batchDuration}ms`);
       }
 
       const currentProgress = Math.round((batchEnd / rows.length) * 100);
@@ -708,7 +736,7 @@ async function processUploadData(
     console.log(`${'='.repeat(70)}`);
     console.log("✅ PROCESSING SUMMARY");
     console.log(`${'='.repeat(70)}`);
-    console.log(`✅ Successfully inserted: ${processedCount} rows`);
+    console.log(`✓ Successfully inserted: ${processedCount} rows`);
     console.log(`⊘ Skipped (empty): ${skippedCount} rows`);
     console.log(`⊘ Skipped (duplicate): ${duplicateCount} rows`);
     console.log(`✗ Failed: ${errorLog.length} rows`);
