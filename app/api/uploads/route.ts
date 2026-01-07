@@ -1,12 +1,15 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 // app/api/uploads/route.ts
+export const runtime = "nodejs";
+
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import { parse } from "papaparse";
 import { applyCalculationsAndDerivations } from "@/lib/field-calculations";
 import { createClient } from '@supabase/supabase-js';
+
 
 // Create Supabase ADMIN client with SERVICE_ROLE key (bypasses RLS)
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
