@@ -225,50 +225,59 @@ export default function UploadsPage() {
 
     setUploading(true);
     setUploadProgress(0);
-    setUploadStage("Preparing upload...");
+    setUploadStage("Uploading file...");
     setError(null);
 
     try {
-      // ✅ Upload file via FormData to backend (backend will handle Supabase upload)
-      setUploadStage("Uploading file...");
+      // ✅ Upload langsung ke Supabase dari browser
+      const { createClient } = await import("@supabase/supabase-js");
+      const supabase = createClient(
+        process.env.NEXT_PUBLIC_SUPABASE_URL!,
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!
+      );
+
+      const timestamp = Date.now();
+      const sanitizedFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, "_");
+      const storagePath = `payroll/${timestamp}-${sanitizedFileName}`;
+
       setUploadProgress(20);
 
-      const formData = new FormData();
-      formData.append("file", file);
-      formData.append("period", period);
+      // Upload langsung ke Supabase (bypass Vercel)
+      const { error: uploadError } = await supabase.storage
+        .from("payroll-uploads")
+        .upload(storagePath, file, {
+          cacheControl: "3600",
+          upsert: false,
+        });
 
+      if (uploadError) {
+        throw new Error(`Storage upload failed: ${uploadError.message}`);
+      }
+
+      setUploadProgress(60);
       setUploadStage("Processing data...");
-      setUploadProgress(50);
 
+      // Notify backend untuk process
       const response = await fetch("/api/uploads", {
         method: "POST",
-        body: formData, // Send FormData directly
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          storagePath: storagePath,
+          fileName: file.name,
+          fileSize: file.size,
+          period: period,
+        }),
       });
 
-      // ✅ TAMBAHKAN: Cek jika response bukan JSON
       const contentType = response.headers.get("content-type");
-      if (!contentType || !contentType.includes("application/json")) {
+      if (!contentType?.includes("application/json")) {
         const text = await response.text();
-        console.error("Non-JSON response:", text);
-
-        showModal(
-          "error",
-          "Upload Failed",
-          `Server returned an error: ${response.status} ${response.statusText}`,
-          { responseText: text }
-        );
-
-        setError({
-          message: `Server error: ${response.status} ${response.statusText}`,
-          code: `HTTP_${response.status}`,
-        });
-        return;
+        throw new Error(`Server error: ${response.status}`);
       }
 
       const data = await response.json();
 
       if (!response.ok) {
-        // Show detailed error for duplicates
         if (data.code === "DUPLICATE_IN_FILE") {
           showModal(
             "error",
@@ -284,9 +293,8 @@ export default function UploadsPage() {
             data.details
           );
         }
-
         setError({
-          message: data.error || "Upload failed",
+          message: data.error,
           code: data.code,
           details: data.details,
         });
@@ -294,14 +302,13 @@ export default function UploadsPage() {
       }
 
       setUploadProgress(100);
-      setUploadStage("Upload completed successfully!");
+      setUploadStage("Upload completed!");
 
-      // Show warning if duplicates with same period
       if (data.warning) {
         showModal(
           "warning",
           "File Uploaded with Warnings",
-          `Your file "${file.name}" has been uploaded successfully.\n\n${data.warning.message}`,
+          `Your file "${file.name}" has been uploaded.\n\n${data.warning.message}`,
           undefined,
           () => {
             setFile(null);
@@ -314,7 +321,7 @@ export default function UploadsPage() {
         showModal(
           "success",
           "File Uploaded Successfully!",
-          `Your file "${file.name}" has been uploaded and processing will start automatically.`,
+          `Your file "${file.name}" has been uploaded and processing will start.`,
           undefined,
           () => {
             setFile(null);
@@ -329,9 +336,7 @@ export default function UploadsPage() {
       showModal(
         "error",
         "Upload Error",
-        err instanceof Error
-          ? err.message
-          : "Failed to upload file. Please try again."
+        err instanceof Error ? err.message : "Failed to upload file."
       );
       setError({
         message: err instanceof Error ? err.message : "Upload failed",
