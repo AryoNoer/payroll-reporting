@@ -23,7 +23,7 @@ const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
   },
 });
 
-const STORAGE_BUCKET = 'payroll-components';
+const STORAGE_BUCKET = 'payroll-uploads';
 
 // Error logger helper
 class UploadError extends Error {
@@ -98,7 +98,7 @@ export async function POST(request: NextRequest) {
     const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
       .from(STORAGE_BUCKET)
       .upload(storagePath, fileBuffer, {
-        contentType: 'text/csv',
+        contentType: file.type || 'text/csv',
         cacheControl: '3600',
         upsert: false,
       });
@@ -190,45 +190,126 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // Step 7: Parse CSV
-    console.log("[Step 7] Parsing CSV...");
-    const firstDataLine = finalContent.split('\n')[0] || '';
-    const detectedDelimiter = firstDataLine.includes('\t') ? '\t' : ',';
+    // Step 7: Parse CSV with better delimiter detection
+console.log("[Step 7] Parsing CSV...");
+
+// Remove BOM if present
+if (content.charCodeAt(0) === 0xFEFF) {
+  content = content.substring(1);
+  console.log('  ⚠ Removed UTF-8 BOM');
+}
+
+// Detect delimiter by checking first line
+const firstLine = finalContent.split('\n')[0] || '';
+let detectedDelimiter = ',';
+
+const commaCount = (firstLine.match(/,/g) || []).length;
+const semicolonCount = (firstLine.match(/;/g) || []).length;
+const tabCount = (firstLine.match(/\t/g) || []).length;
+const pipeCount = (firstLine.match(/\|/g) || []).length;
+
+console.log('Delimiter detection:', {
+  commas: commaCount,
+  semicolons: semicolonCount,
+  tabs: tabCount,
+  pipes: pipeCount,
+});
+
+if (semicolonCount > commaCount) {
+  detectedDelimiter = ';';
+  console.log('✓ Detected delimiter: semicolon (;)');
+} else if (tabCount > commaCount) {
+  detectedDelimiter = '\t';
+  console.log('✓ Detected delimiter: tab (\\t)');
+} else if (pipeCount > commaCount) {
+  detectedDelimiter = '|';
+  console.log('✓ Detected delimiter: pipe (|)');
+} else {
+  console.log('✓ Detected delimiter: comma (,)');
+}
+
+// Parse with detected delimiter
+const parseResult = parse(finalContent, {
+  header: true,
+  delimiter: detectedDelimiter, // Use detected delimiter
+  skipEmptyLines: true,
+  newline: '\n',
+  quoteChar: '"',
+  escapeChar: '"',
+  transformHeader: (header: string, index: number) => {
+    const cleanHeader = header.trim();
+    return !cleanHeader ? `Column_${index}` : cleanHeader;
+  },
+  transform: (value: string) => value?.trim() || "",
+});
+
+const { data, errors, meta } = parseResult;
+
+console.log(`✓ CSV parsed: ${(data as any[]).length} rows, ${meta.fields?.length || 0} columns`);
+
+// Log first few column names for debugging
+if (meta.fields && meta.fields.length > 0) {
+  console.log('First 10 columns:', meta.fields.slice(0, 10));
+}
+
+// Enhanced error reporting
+if (errors.length > 0) {
+  console.error(`❌ CSV Parse Errors: ${errors.length}`);
+  
+  // Log first few errors for debugging
+  console.error('First 5 errors:');
+  errors.slice(0, 5).forEach((err: any, idx: number) => {
+    console.error(`  ${idx + 1}. Row ${err.row}: ${err.code} - ${err.message}`);
+  });
+  
+  // Only fail if there are critical errors
+  const criticalErrors = errors.filter((e: any) => 
+    e.code === 'TooManyFields' || 
+    e.code === 'TooFewFields' ||
+    e.code === 'MissingQuotes'
+  );
+  
+  if (criticalErrors.length > 0) {
+    await supabaseAdmin.storage.from(STORAGE_BUCKET).remove([storagePath]);
     
-    const parseResult = parse(finalContent, {
-      header: true,
-      delimiter: detectedDelimiter,
-      skipEmptyLines: true,
-      newline: '\n',
-      quoteChar: '"',
-      escapeChar: '"',
-      transformHeader: (header: string, index: number) => {
-        const cleanHeader = header.trim();
-        return !cleanHeader ? `Column_${index}` : cleanHeader;
-      },
-      transform: (value: string) => value?.trim() || "",
+    let errorMessage = "CSV parsing failed";
+    if (criticalErrors[0].code === "TooManyFields") {
+      errorMessage = `CSV format error: File has inconsistent columns. Some rows have more fields than headers.`;
+    } else if (criticalErrors[0].code === "TooFewFields") {
+      errorMessage = `CSV format error: File has inconsistent columns. Some rows have fewer fields than headers.`;
+    }
+    
+    throw new UploadError(errorMessage, "PARSE_ERROR", { 
+      totalErrors: criticalErrors.length,
+      sampleErrors: criticalErrors.slice(0, 5).map((e: any) => ({
+        row: e.row,
+        code: e.code,
+        message: e.message
+      }))
     });
+  } else {
+    console.warn(`⚠ Non-critical parse errors: ${errors.length}, continuing...`);
+  }
+}
 
-    const { data, errors, meta } = parseResult;
+if (!data || (data as any[]).length === 0) {
+  await supabaseAdmin.storage.from(STORAGE_BUCKET).remove([storagePath]);
+  throw new UploadError("CSV file is empty", "EMPTY_FILE");
+}
 
-    console.log(`✓ CSV parsed: ${(data as any[]).length} rows, ${meta.fields?.length || 0} columns`);
-
-    if (errors.length > 0) {
-      console.error(`❌ CSV Parse Errors: ${errors.length}`);
-      await supabaseAdmin.storage.from(STORAGE_BUCKET).remove([storagePath]);
-      
-      let errorMessage = "CSV parsing failed";
-      if (errors[0].code === "TooManyFields") {
-        errorMessage = `CSV format error: File has inconsistent columns.`;
-      }
-      
-      throw new UploadError(errorMessage, "PARSE_ERROR", { totalErrors: errors.length });
+// Validate we got multiple columns (not just 1)
+if (meta.fields && meta.fields.length === 1) {
+  await supabaseAdmin.storage.from(STORAGE_BUCKET).remove([storagePath]);
+  throw new UploadError(
+    `CSV parsing error: Only 1 column detected. Please check your CSV format and delimiter. Detected delimiter: ${detectedDelimiter}`,
+    "INVALID_FORMAT",
+    {
+      detectedColumns: meta.fields,
+      detectedDelimiter,
+      suggestion: "Your CSV might be using a different delimiter (semicolon, tab, or pipe). Please check your export settings."
     }
-
-    if (!data || (data as any[]).length === 0) {
-      await supabaseAdmin.storage.from(STORAGE_BUCKET).remove([storagePath]);
-      throw new UploadError("CSV file is empty", "EMPTY_FILE");
-    }
+  );
+}
 
     // Step 8: Validate headers
     console.log("[Step 8] Validating CSV structure...");
