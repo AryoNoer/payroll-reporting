@@ -243,6 +243,7 @@ export default function UploadsPage() {
       const response = await fetch("/api/uploads", {
         method: "POST",
         body: formData, // Send FormData directly
+        credentials: "include", // 🔥 INI FIX-NYA
       });
 
       // ✅ TAMBAHKAN: Cek jika response bukan JSON

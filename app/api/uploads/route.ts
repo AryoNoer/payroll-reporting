@@ -62,59 +62,9 @@ export async function GET() {
   }
 }
 
-// Add this at the START of POST function in route.ts
-
 export async function POST(request: NextRequest) {
   const startTime = Date.now();
-  console.log("\n" + "=".repeat(70));
-  console.log("=== UPLOAD REQUEST STARTED ===");
-  console.log("=".repeat(70));
-  
-  // ✅ CRITICAL: Debug environment variables
-  console.log("\n🔍 ENVIRONMENT DEBUG:");
-  console.log("- NODE_ENV:", process.env.NODE_ENV);
-  console.log("- VERCEL:", process.env.VERCEL);
-  console.log("- VERCEL_ENV:", process.env.VERCEL_ENV);
-  console.log("- VERCEL_URL:", process.env.VERCEL_URL);
-  
-  console.log("\n🔑 SUPABASE CONFIGURATION:");
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  
-  console.log("- SUPABASE_URL:", supabaseUrl);
-  console.log("- SERVICE_KEY exists:", !!supabaseServiceKey);
-  console.log("- SERVICE_KEY length:", supabaseServiceKey?.length || 0);
-  
-  if (supabaseServiceKey) {
-    console.log("- SERVICE_KEY prefix:", supabaseServiceKey.substring(0, 50) + "...");
-    
-    // Decode JWT to verify role
-    try {
-      const parts = supabaseServiceKey.split('.');
-      if (parts.length === 3) {
-        const payload = JSON.parse(Buffer.from(parts[1], 'base64').toString());
-        console.log("- JWT decoded successfully:");
-        console.log("  - role:", payload.role);
-        console.log("  - iss:", payload.iss);
-        console.log("  - ref:", payload.ref);
-        
-        if (payload.role !== 'service_role') {
-          console.error("❌ WARNING: Key is NOT service_role! Got:", payload.role);
-        } else {
-          console.log("✓ JWT role verified: service_role");
-        }
-      } else {
-        console.error("❌ Invalid JWT format: expected 3 parts, got", parts.length);
-      }
-    } catch (e) {
-      console.error("❌ Failed to decode JWT:", e);
-    }
-  } else {
-    console.error("❌ CRITICAL: SUPABASE_SERVICE_ROLE_KEY is undefined!");
-    console.error("   This will cause 403 errors!");
-  }
-  
-  console.log("\n" + "=".repeat(70) + "\n");
+  console.log("\n=== UPLOAD REQUEST STARTED (BACKEND STORAGE) ===");
   
   try {
     // Step 1: Authenticate user
