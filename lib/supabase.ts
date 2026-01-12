@@ -221,7 +221,7 @@ export const storageHelpers = {
 // Storage constants
 export const STORAGE_BUCKETS = {
   PAYROLL_COMPONENTS: 'payroll-components',
-  PAYROLL_UPLOADS: 'payroll-uploads',
+  PAYROLL_UPLOADS: 'PAYROLL-UPLOADS',
 } as const
 
 // Max file size (500MB - sesuai Supabase bucket limit)
