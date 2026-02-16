@@ -417,7 +417,7 @@ async function processChunk(request: NextRequest) {
       const existingUpload = await prisma.upload.findFirst({
         where: { fileName: filePath },
       });
-      resolvedUploadId = existingUpload?.id;
+      resolvedUploadId = existingUpload?.id ?? null;
     }
 
     if (!resolvedUploadId) {
