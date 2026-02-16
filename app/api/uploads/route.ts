@@ -16,10 +16,11 @@ export async function POST(request: NextRequest) {
 
     const formData = await request.formData();
     const file = formData.get("file") as File;
-    const type = formData.get("type") as string;
+    // Accept both "type" and "period" field names from different upload pages
+    const type = (formData.get("type") as string) || (formData.get("period") as string) || "payroll";
 
-    if (!file || !type) {
-      return NextResponse.json({ error: "Missing file or type" }, { status: 400 });
+    if (!file) {
+      return NextResponse.json({ error: "Missing file" }, { status: 400 });
     }
 
     console.log("Received file:", file.name, file.type, file.size);
@@ -89,7 +90,17 @@ export async function GET(request: NextRequest) {
       return await processStorageFile(request);
     }
 
-    return NextResponse.json({ error: "Invalid action" }, { status: 400 });
+    // Default: return upload history from database
+    const uploads = await prisma.upload.findMany({
+      orderBy: { uploadedAt: 'desc' },
+      include: {
+        _count: {
+          select: { employees: true }
+        }
+      }
+    });
+
+    return NextResponse.json(uploads);
 
   } catch (error: any) {
     console.error("GET error:", error);
