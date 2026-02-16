@@ -142,7 +142,7 @@ export default function UploadComponentsPage() {
       formData.append("file", file);
       formData.append("type", selectedType);
 
-      const uploadResponse = await fetch("/api/uploads", {
+      const uploadResponse = await fetch("/api/uploads/components", {
         method: "POST",
         body: formData,
       });
