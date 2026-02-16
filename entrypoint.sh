@@ -5,4 +5,4 @@ if [ -d /data/uploads ]; then
 fi
 
 # Switch to nextjs user and start the server
-exec su -s /bin/sh nextjs -c "node server.js"
+exec su -s /bin/sh nextjs -c "NODE_OPTIONS='--max-old-space-size=2048' node server.js"
