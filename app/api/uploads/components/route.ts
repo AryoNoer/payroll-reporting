@@ -62,7 +62,7 @@ async function handleFileUpload(request: NextRequest, user: any) {
   const buffer = Buffer.from(arrayBuffer);
 
   // Save to disk
-  const uploadDir = process.env.UPLOAD_DIR || '/data/uploads';
+  const uploadDir = process.env.UPLOAD_DIR || './uploads';
   await fs.mkdir(uploadDir, { recursive: true });
 
   const timestamp = Date.now();
@@ -101,7 +101,7 @@ async function handleChunkProcessing(request: NextRequest, user: any) {
   console.log(`[Components] Processing chunk ${chunkIndex + 1} of ${fileName}`);
 
   // Read file from Railway Volume
-  const fullPath = path.join(process.env.UPLOAD_DIR || '/data/uploads', filePath);
+  const fullPath = path.join(process.env.UPLOAD_DIR || './uploads', filePath);
   const buffer = await fs.readFile(fullPath);
 
   let allRows: any[] = [];
