@@ -4,6 +4,9 @@ const nextConfig: NextConfig = {
   // Standalone output for Docker/Railway deployment
   output: 'standalone',
 
+  // Ensure these packages are loaded from node_modules (not webpack-bundled)
+  serverExternalPackages: ['exceljs', 'xlsx'],
+
   // Server Actions body size limit (500MB for large file uploads)
   experimental: {
     serverActions: {

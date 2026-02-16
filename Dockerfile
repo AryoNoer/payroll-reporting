@@ -45,9 +45,9 @@ COPY --from=builder /app/.next/static ./.next/static
 
 # Copy Prisma files for runtime and migrations
 COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
-COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
+
+# Copy node_modules for runtime (Prisma client + serverExternalPackages like exceljs, xlsx)
+COPY --from=builder /app/node_modules ./node_modules
 
 # Copy data directory for seed
 COPY --from=builder /app/data ./data

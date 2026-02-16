@@ -1,30 +1,33 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 // app/api/reports/[id]/download/route.ts
+// ✅ Uses ExcelJS streaming writer to avoid OOM on large datasets
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
-import { generateTemplatedExcel, workbookToBuffer, getCategorySummary } from "@/lib/excel-template";
 import { categorizeFields } from "@/lib/field-categories";
 import { applyCalculationsAndDerivations } from "@/lib/field-calculations";
 import { OUTPUT_FIELDS } from "@/lib/output-fields";
 import { HEADCOUNT_FIELDS } from "@/lib/headcount-fields";
 import { aggregateCostCenterData } from "@/lib/cost-center-aggregation";
+import ExcelJS from 'exceljs';
+import { PassThrough } from 'stream';
 
-// Configure route for longer execution
-export const maxDuration = 300; // seconds (Vercel)
+// Configure route
+export const maxDuration = 300;
 export const dynamic = 'force-dynamic';
 
-// ✅ Process data in smaller batches to reduce memory usage
-const BATCH_SIZE = 2000;
+const DB_BATCH_SIZE = 2000;
 
 /**
- * Helper: yield to event loop to prevent blocking.
- * This keeps the connection alive on Railway's proxy.
+ * Text fields that must be stored as strings (prevent Excel number truncation)
  */
-function yieldToEventLoop(): Promise<void> {
-  return new Promise(resolve => setTimeout(resolve, 0));
-}
+const TEXT_FIELDS = new Set([
+  'Jobstatus Code', 'No KTP', 'Gov. Tax File No.', 'Employee No',
+  'Cost Center Code', 'Work Location Code', 'Tax Location Code',
+  'Company Bank Account', 'Bank Account',
+  'Insurance No BPJSKT', 'Insurance No BPJSKES',
+]);
 
 export async function GET(
   request: NextRequest,
@@ -37,289 +40,267 @@ export async function GET(
     const { id: reportId } = await params;
 
     console.log('\n' + '='.repeat(60));
-    console.log('📊 GENERATING REPORT');
+    console.log('📊 GENERATING REPORT (ExcelJS Streaming)');
     console.log('='.repeat(60));
-    console.log(`Report ID: ${reportId}`);
-    console.log(`Start time: ${new Date().toISOString()}`);
 
     // Get report
     const report = await prisma.report.findFirst({
-      where: {
-        id: reportId,
-        userId: user.id,
-      },
-      include: {
-        upload: true,
-      },
+      where: { id: reportId, userId: user.id },
+      include: { upload: true },
     });
 
     if (!report) {
-      return NextResponse.json(
-        { error: "Report not found" },
-        { status: 404 }
-      );
+      return NextResponse.json({ error: "Report not found" }, { status: 404 });
     }
 
-    console.log(`✓ Report: ${report.name}`);
-    console.log(`✓ Upload: ${report.upload.originalName}`);
-
-    // ✅ Get employees count first
+    // Get employee count
     const totalCount = await prisma.employee.count({
       where: { uploadId: report.uploadId }
     });
 
-    console.log(`✓ Total employees: ${totalCount}`);
+    console.log(`✓ Report: ${report.name} (${report.reportType})`);
+    console.log(`✓ Upload: ${report.upload.originalName}, ${totalCount} employees`);
 
-    // ✅ Fetch employees in batches
-    let employees: any[] = [];
-
-    if (totalCount > 5000) {
-      console.log(`⚡ Large dataset detected, fetching in batches...`);
-
-      const batchCount = Math.ceil(totalCount / BATCH_SIZE);
-      for (let i = 0; i < batchCount; i++) {
-        const batch = await prisma.employee.findMany({
-          where: { uploadId: report.uploadId },
-          orderBy: { employeeNo: 'asc' },
-          skip: i * BATCH_SIZE,
-          take: BATCH_SIZE,
-        });
-        employees.push(...batch);
-
-        console.log(`  Batch ${i + 1}/${batchCount}: ${batch.length} rows`);
-
-        if (i < batchCount - 1) {
-          await yieldToEventLoop();
-        }
-      }
-
-      console.log(`✓ Fetched all ${employees.length} employees in ${batchCount} batches`);
-    } else {
-      employees = await prisma.employee.findMany({
-        where: { uploadId: report.uploadId },
-        orderBy: { employeeNo: 'asc' }
-      });
-      console.log(`✓ Fetched ${employees.length} employees in single query`);
-    }
-
-    const fetchTime = ((Date.now() - startTime) / 1000).toFixed(2);
-    console.log(`⏱️ Fetch time: ${fetchTime}s`);
-
-    // ✅ Filter by COA if Cabang Report
-    let filteredEmployees = employees;
-    if (report.reportType === "CABANG") {
-      filteredEmployees = employees.filter((emp) => {
-        const neutralData = (emp.neutralData as any) || {};
-        const salaryData = (emp.salaryData as any) || {};
-        const costCenter = String(neutralData['Cost Center'] || salaryData['Cost Center'] || '').toLowerCase();
-        return !costCenter.includes('kantor pusat');
-      });
-
-      console.log(`✓ Filtered for Cabang: ${filteredEmployees.length} employees (COA = 500)`);
-    }
-
-    console.log(`✓ Processing ${filteredEmployees.length} rows`);
-
-    // ✅ Handle Cost Center Report (Aggregated)
+    // ✅ Handle Cost Center Report — smaller dataset, use in-memory approach
     if (report.reportType === "COST_CENTER") {
-      return await generateCostCenterResponse(employees, report, startTime);
+      return await generateCostCenterResponse(report, totalCount, startTime);
     }
 
-    // ✅ Handle THR Cabang Report
+    // Determine fields based on report type
+    let fieldNames: string[];
+    let sheetName: string;
+    let suffix = '';
+
     if (report.reportType === "THR_CABANG") {
-      return await generateTHRCabangResponse(filteredEmployees, report, startTime);
+      const { THR_CABANG_FIELDS } = await import("@/lib/thr-cabang-fields");
+      fieldNames = [...THR_CABANG_FIELDS];
+      sheetName = 'THR Cabang';
+      suffix = '_THR_Cabang';
+    } else if (report.reportType === "HEADCOUNT") {
+      fieldNames = [...HEADCOUNT_FIELDS];
+      sheetName = 'Headcount';
+    } else {
+      fieldNames = [...OUTPUT_FIELDS];
+      sheetName = 'Report';
     }
 
-    // ✅ Select fields based on report type
-    const allFieldNames = report.reportType === "HEADCOUNT"
-      ? [...HEADCOUNT_FIELDS]
-      : OUTPUT_FIELDS;
+    console.log(`✅ Using ${fieldNames.length} fields for ${report.reportType}`);
 
-    console.log(`✅ Using ${report.reportType} fields: ${allFieldNames.length} fields total`);
-
-    // ✅ Generate Excel buffer using streaming approach
-    const buffer = await generateExcelBuffer(
-      filteredEmployees, allFieldNames, report, startTime
-    );
-
-    const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
-    console.log(`✓ Excel size: ${(buffer.length / 1024).toFixed(2)} KB`);
-    console.log(`⏱️ Total time: ${totalTime}s`);
-    console.log('='.repeat(60));
-    console.log('✅ DOWNLOAD COMPLETE - ALL COLUMNS INCLUDED');
-    console.log('='.repeat(60) + '\n');
-
-    // ✅ Return as streaming response to keep Railway proxy connection alive
+    // ✅ Create PassThrough stream and start response immediately
+    const passThrough = new PassThrough();
     const sanitizedName = report.name.replace(/[^a-zA-Z0-9-_\s]/g, '_');
 
-    const stream = new ReadableStream({
+    // Start Excel generation in background (non-blocking)
+    streamExcelGeneration(passThrough, report, fieldNames, sheetName, totalCount, startTime)
+      .catch(err => {
+        console.error('❌ Excel streaming error:', err);
+        if (!passThrough.destroyed) {
+          passThrough.destroy(err);
+        }
+      });
+
+    // Convert Node PassThrough to Web ReadableStream
+    const webStream = new ReadableStream({
       start(controller) {
-        controller.enqueue(new Uint8Array(buffer));
-        controller.close();
+        passThrough.on('data', (chunk: Buffer) => {
+          controller.enqueue(new Uint8Array(chunk));
+        });
+        passThrough.on('end', () => {
+          controller.close();
+        });
+        passThrough.on('error', (err) => {
+          controller.error(err);
+        });
+      },
+      cancel() {
+        passThrough.destroy();
       }
     });
 
-    return new Response(stream, {
+    // Return streaming response immediately — keeps Railway proxy alive
+    return new Response(webStream, {
       headers: {
         "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        "Content-Disposition": `attachment; filename="${sanitizedName}.xlsx"`,
-        "Content-Length": String(buffer.length),
+        "Content-Disposition": `attachment; filename="${sanitizedName}${suffix}.xlsx"`,
+        "Transfer-Encoding": "chunked",
       },
     });
   } catch (error) {
     const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
+    console.error(`❌ DOWNLOAD ERROR after ${totalTime}s:`, error);
 
-    console.error('\n' + '='.repeat(60));
-    console.error("❌ DOWNLOAD ERROR");
-    console.error('='.repeat(60));
-    console.error(`Total time before error: ${totalTime}s`);
-    console.error(error);
-    console.error('='.repeat(60) + '\n');
-
-    // ✅ Better error messages
     let errorMessage = "Failed to download report";
     if (error instanceof Error) {
       if (error.message.includes('timeout') || error.message.includes('ETIMEDOUT')) {
-        errorMessage = "Report generation timed out. The file is too large. Please try filtering the data or contact the administrator.";
+        errorMessage = "Report generation timed out.";
       } else if (error.message.includes('memory')) {
-        errorMessage = "Out of memory while generating report. Please try with a smaller dataset.";
+        errorMessage = "Out of memory. Try a smaller dataset.";
       } else {
         errorMessage = error.message;
       }
     }
 
     return NextResponse.json(
-      {
-        error: errorMessage,
-        message: error instanceof Error ? error.message : "Unknown error",
-        executionTime: `${totalTime}s`
-      },
+      { error: errorMessage, executionTime: `${totalTime}s` },
       { status: 500 }
     );
   }
 }
 
 /**
- * Generate Excel buffer with periodic event loop yielding
- * to prevent Railway proxy timeout
+ * Stream Excel generation using ExcelJS WorkbookWriter.
+ * Rows are committed immediately after creation, freeing memory.
+ * Employees are fetched from DB in batches, not all at once.
  */
-async function generateExcelBuffer(
-  employees: any[],
-  allFieldNames: string[],
+async function streamExcelGeneration(
+  stream: PassThrough,
   report: any,
+  fieldNames: string[],
+  sheetName: string,
+  totalCount: number,
   startTime: number
-): Promise<Buffer> {
-  console.log('\n📋 Building data rows with ALL columns...');
-  const excelData = [];
-  const progressInterval = Math.ceil(employees.length / 10);
-  const YIELD_INTERVAL = 500; // Yield to event loop every 500 rows
-
-  for (let i = 0; i < employees.length; i++) {
-    const emp = employees[i];
-
-    const row: any = {
-      'No': i + 1,
-      'Name': emp.name,
-      'Employee No': emp.employeeNo,
-      'Gender': emp.gender,
-      'No KTP': emp.noKTP,
-      'Gov. Tax File No.': emp.taxFileNo,
-      'Position': emp.position,
-      'Directorate': emp.directorate,
-      'Org Unit': emp.orgUnit,
-      'Grade': emp.grade,
-      'Employment Status': emp.employmentStatus,
-      'Join Date': emp.joinDate ? new Date(emp.joinDate).toLocaleDateString('id-ID') : '',
-      'Terminate Date': emp.terminateDate ? new Date(emp.terminateDate).toLocaleDateString('id-ID') : '',
-      'Length Of Service': emp.lengthOfService,
-      'Tax Status': emp.taxStatus,
-    };
-
-    const salaryData = (emp.salaryData as any) || {};
-    const allowanceData = (emp.allowanceData as any) || {};
-    const deductionData = (emp.deductionData as any) || {};
-    const neutralData = (emp.neutralData as any) || {};
-
-    Object.assign(row, salaryData, allowanceData, deductionData, neutralData);
-    const processedRow = applyCalculationsAndDerivations(row);
-
-    const finalRow: any = {};
-    allFieldNames.forEach(fieldName => {
-      finalRow[fieldName] = processedRow[fieldName] ?? '';
-    });
-
-    excelData.push(finalRow);
-
-    // Progress logging
-    if ((i + 1) % progressInterval === 0) {
-      const progress = Math.round(((i + 1) / employees.length) * 100);
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      console.log(`  Progress: ${progress}% (${i + 1}/${employees.length} rows) - ${elapsed}s elapsed`);
-    }
-
-    // ✅ Yield to event loop periodically to prevent blocking
-    if ((i + 1) % YIELD_INTERVAL === 0) {
-      await yieldToEventLoop();
-    }
-  }
-
-  const processTime = ((Date.now() - startTime) / 1000).toFixed(2);
-  console.log(`✓ Data rows built: ${excelData.length} rows x ${allFieldNames.length} columns in ${processTime}s`);
-
-  // Count coverage
-  const sampleRow = excelData[0] || {};
-  const fieldsWithData = Object.values(sampleRow).filter(v => v !== '' && v !== null && v !== 0).length;
-  const emptyFields = allFieldNames.length - fieldsWithData;
-
-  console.log(`\n📊 Data Coverage:`);
-  console.log(`  - Fields with data: ${fieldsWithData}`);
-  console.log(`  - Empty fields: ${emptyFields}`);
-  console.log(`  - Coverage: ${((fieldsWithData / allFieldNames.length) * 100).toFixed(1)}%`);
-
-  // Get category summary
-  const fieldCategories = categorizeFields(allFieldNames);
-  const summary = getCategorySummary(allFieldNames, fieldCategories);
-
-  console.log('\n📊 Field Distribution by Category:');
-  Object.entries(summary)
-    .sort((a, b) => b[1] - a[1])
-    .forEach(([category, count]) => {
-      console.log(`  - ${category}: ${count} fields`);
-    });
-
-  // Generate Excel
-  console.log('\n📄 Generating Excel with templated headers...');
-  const excelStartTime = Date.now();
-
-  const wb = generateTemplatedExcel(excelData, allFieldNames, {
-    sheetName: 'Report',
-    autoWidth: true,
-    maxWidth: 50
+) {
+  const workbook = new ExcelJS.stream.xlsx.WorkbookWriter({
+    stream,
+    useStyles: true,
   });
 
-  const excelTime = ((Date.now() - excelStartTime) / 1000).toFixed(2);
-  console.log(`✓ Excel generation: ${excelTime}s`);
+  const sheet = workbook.addWorksheet(sheetName);
 
-  // Convert to buffer
-  const bufferStartTime = Date.now();
-  const buffer = workbookToBuffer(wb);
-  const bufferTime = ((Date.now() - bufferStartTime) / 1000).toFixed(2);
-  console.log(`✓ Buffer conversion: ${bufferTime}s`);
+  // ✅ Set column definitions with widths
+  sheet.columns = fieldNames.map(name => ({
+    header: name,
+    key: name,
+    width: Math.min(Math.max(name.length + 2, 12), 50),
+  }));
 
-  return buffer;
+  // ✅ Write header rows (5 rows: empty, L1, L2, L3, field names)
+  const fieldCategories = categorizeFields(fieldNames);
+
+  // Row 1: Empty
+  sheet.addRow(new Array(fieldNames.length).fill('')).commit();
+
+  // Row 2: Level 1 categories
+  sheet.addRow(fieldNames.map(n => fieldCategories.get(n)?.level1 || 'Netral')).commit();
+
+  // Row 3: Level 2 categories
+  sheet.addRow(fieldNames.map(n => fieldCategories.get(n)?.level2 || 'Netral')).commit();
+
+  // Row 4: Level 3 categories
+  sheet.addRow(fieldNames.map(n => fieldCategories.get(n)?.level3 || 'Netral')).commit();
+
+  // Row 5: Field names
+  sheet.addRow(fieldNames).commit();
+
+  console.log(`✓ Headers written (5 rows)`);
+
+  // ✅ Fetch and process employees in batches from DB
+  const batchCount = Math.ceil(totalCount / DB_BATCH_SIZE);
+  let totalProcessed = 0;
+  const isCabang = report.reportType === "CABANG";
+  const isTHR = report.reportType === "THR_CABANG";
+
+  for (let batchIdx = 0; batchIdx < batchCount; batchIdx++) {
+    // Fetch one batch from DB
+    const employees = await prisma.employee.findMany({
+      where: { uploadId: report.uploadId },
+      orderBy: { employeeNo: 'asc' },
+      skip: batchIdx * DB_BATCH_SIZE,
+      take: DB_BATCH_SIZE,
+    });
+
+    // Filter for Cabang if needed
+    let batch = employees;
+    if (isCabang) {
+      batch = employees.filter(emp => {
+        const neutralData = (emp.neutralData as any) || {};
+        const salaryData = (emp.salaryData as any) || {};
+        const cc = String(neutralData['Cost Center'] || salaryData['Cost Center'] || '').toLowerCase();
+        return !cc.includes('kantor pusat');
+      });
+    }
+
+    // Process each employee in this batch
+    for (const emp of batch) {
+      totalProcessed++;
+
+      // Build raw row from employee data
+      const rawRow: any = {
+        'No': totalProcessed,
+        'Name': emp.name,
+        'Employee No': emp.employeeNo,
+        'Position': emp.position,
+        'Department': emp.orgUnit,
+        'Employment Status': emp.employmentStatus,
+        'Join Date': emp.joinDate ? new Date(emp.joinDate).toLocaleDateString('id-ID') : '',
+        'Terminate Date': emp.terminateDate ? new Date(emp.terminateDate).toLocaleDateString('id-ID') : '',
+      };
+
+      // Add extra fields for non-THR reports
+      if (!isTHR) {
+        rawRow['Gender'] = emp.gender;
+        rawRow['No KTP'] = emp.noKTP;
+        rawRow['Gov. Tax File No.'] = emp.taxFileNo;
+        rawRow['Directorate'] = emp.directorate;
+        rawRow['Org Unit'] = emp.orgUnit;
+        rawRow['Grade'] = emp.grade;
+        rawRow['Length Of Service'] = emp.lengthOfService;
+        rawRow['Tax Status'] = emp.taxStatus;
+      }
+
+      // Merge JSON data blobs
+      const salaryData = (emp.salaryData as any) || {};
+      const allowanceData = (emp.allowanceData as any) || {};
+      const deductionData = (emp.deductionData as any) || {};
+      const neutralData = (emp.neutralData as any) || {};
+      Object.assign(rawRow, salaryData, allowanceData, deductionData, neutralData);
+
+      // Apply calculations
+      const processedRow = applyCalculationsAndDerivations(rawRow);
+
+      // Build final row in field order
+      const rowValues = fieldNames.map(field => {
+        const val = processedRow[field] ?? '';
+        if (TEXT_FIELDS.has(field) && val !== '') {
+          return String(val);
+        }
+        return val;
+      });
+
+      // ✅ Add row and commit immediately — frees memory
+      sheet.addRow(rowValues).commit();
+    }
+
+    const progress = Math.round(((batchIdx + 1) / batchCount) * 100);
+    const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
+    console.log(`  Batch ${batchIdx + 1}/${batchCount}: ${batch.length} rows (${progress}%) - ${elapsed}s`);
+
+    // ✅ Yield to event loop and let GC clean up the batch
+    await new Promise(resolve => setTimeout(resolve, 10));
+  }
+
+  // ✅ Finalize workbook — flushes remaining data and closes the stream
+  await workbook.commit();
+
+  const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
+  console.log(`\n✅ STREAMING COMPLETE: ${totalProcessed} rows in ${totalTime}s`);
 }
 
 /**
- * Generate Cost Center Report response
+ * Cost Center Report — aggregated data, small enough for in-memory generation
  */
 async function generateCostCenterResponse(
-  employees: any[],
   report: any,
+  totalCount: number,
   startTime: number
 ): Promise<Response> {
-  console.log('\n' + '='.repeat(60));
   console.log('📊 GENERATING COST CENTER REPORT (AGGREGATED)');
-  console.log('='.repeat(60));
+
+  // Fetch all employees (needed for aggregation)
+  const employees = await prisma.employee.findMany({
+    where: { uploadId: report.uploadId },
+    orderBy: { employeeNo: 'asc' },
+  });
 
   const aggregatedData = aggregateCostCenterData(employees);
 
@@ -328,121 +309,14 @@ async function generateCostCenterResponse(
   const buffer = costCenterWorkbookToBuffer(wb);
 
   const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
-  console.log(`✓ Excel generated: ${(buffer.byteLength / 1024).toFixed(2)} KB`);
-  console.log(`⏱️ Total time: ${totalTime}s`);
-  console.log('✅ COST CENTER REPORT COMPLETE\n');
+  console.log(`✓ Cost Center Excel: ${(buffer.byteLength / 1024).toFixed(2)} KB in ${totalTime}s`);
 
   const sanitizedName = report.name.replace(/[^a-zA-Z0-9-_\s]/g, '_');
-
-  const stream = new ReadableStream({
-    start(controller) {
-      controller.enqueue(new Uint8Array(buffer));
-      controller.close();
-    }
-  });
-
-  return new Response(stream, {
+  return new Response(new Uint8Array(buffer), {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
       "Content-Disposition": `attachment; filename="${sanitizedName}_CostCenter.xlsx"`,
       "Content-Length": String(buffer.byteLength),
-    },
-  });
-}
-
-/**
- * Generate THR Cabang Report response
- */
-async function generateTHRCabangResponse(
-  filteredEmployees: any[],
-  report: any,
-  startTime: number
-): Promise<Response> {
-  console.log('\n' + '='.repeat(60));
-  console.log('💰 GENERATING THR CABANG REPORT');
-  console.log('='.repeat(60));
-
-  const { THR_CABANG_FIELDS } = await import("@/lib/thr-cabang-fields");
-  const thrFields = [...THR_CABANG_FIELDS];
-
-  console.log(`✓ Using THR Cabang fields: ${thrFields.length} fields`);
-
-  // ✅ Process rows with progress logging and periodic yielding
-  const excelData = [];
-  const progressInterval = Math.ceil(filteredEmployees.length / 10);
-  const YIELD_INTERVAL = 500;
-
-  for (let i = 0; i < filteredEmployees.length; i++) {
-    const emp = filteredEmployees[i];
-
-    const row: any = {
-      'No': i + 1,
-      'Name': emp.name,
-      'Employee No': emp.employeeNo,
-      'Position': emp.position,
-      'Department': emp.orgUnit,
-      'Employment Status': emp.employmentStatus,
-      'Join Date': emp.joinDate ? new Date(emp.joinDate).toLocaleDateString('id-ID') : '',
-      'Terminate Date': emp.terminateDate ? new Date(emp.terminateDate).toLocaleDateString('id-ID') : '',
-    };
-
-    const salaryData = (emp.salaryData as any) || {};
-    const allowanceData = (emp.allowanceData as any) || {};
-    const deductionData = (emp.deductionData as any) || {};
-    const neutralData = (emp.neutralData as any) || {};
-
-    Object.assign(row, salaryData, allowanceData, deductionData, neutralData);
-    const processedRow = applyCalculationsAndDerivations(row);
-
-    const finalRow: any = {};
-    thrFields.forEach(fieldName => {
-      finalRow[fieldName] = processedRow[fieldName] ?? '';
-    });
-
-    excelData.push(finalRow);
-
-    // Progress logging
-    if ((i + 1) % progressInterval === 0) {
-      const progress = Math.round(((i + 1) / filteredEmployees.length) * 100);
-      console.log(`  Progress: ${progress}% (${i + 1}/${filteredEmployees.length} rows)`);
-    }
-
-    // ✅ Yield to event loop periodically
-    if ((i + 1) % YIELD_INTERVAL === 0) {
-      await yieldToEventLoop();
-    }
-  }
-
-  const processTime = ((Date.now() - startTime) / 1000).toFixed(2);
-  console.log(`✓ Data processing: ${processTime}s`);
-
-  const wb = generateTemplatedExcel(excelData, thrFields, {
-    sheetName: 'THR Cabang',
-    autoWidth: true,
-    maxWidth: 50
-  });
-
-  const buffer = workbookToBuffer(wb);
-
-  const totalTime = ((Date.now() - startTime) / 1000).toFixed(2);
-  console.log(`✓ Excel generated: ${(buffer.length / 1024).toFixed(2)} KB`);
-  console.log(`⏱️ Total time: ${totalTime}s`);
-  console.log('='.repeat(60) + '\n');
-
-  const sanitizedName = report.name.replace(/[^a-zA-Z0-9-_\s]/g, '_');
-
-  const stream = new ReadableStream({
-    start(controller) {
-      controller.enqueue(new Uint8Array(buffer));
-      controller.close();
-    }
-  });
-
-  return new Response(stream, {
-    headers: {
-      "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "Content-Disposition": `attachment; filename="${sanitizedName}_THR_Cabang.xlsx"`,
-      "Content-Length": String(buffer.length),
     },
   });
 }
