@@ -16,7 +16,7 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Generate Prisma client and run migrations at build time
+# Generate Prisma client
 RUN npx prisma generate
 
 # Build Next.js in standalone mode
@@ -29,7 +29,6 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
-# Railway injects its own PORT variable — do NOT hardcode it
 ENV HOSTNAME="0.0.0.0"
 
 # Create non-root user for security
@@ -53,9 +52,12 @@ COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
 # Copy data directory for seed
 COPY --from=builder /app/data ./data
 
-USER nextjs
+# Copy and set up entrypoint script
+COPY entrypoint.sh /entrypoint.sh
+RUN chmod +x /entrypoint.sh
 
 EXPOSE 3000
 
-# Start the server — migrations should be run via Railway deploy command or manually
-CMD ["node", "server.js"]
+# Run as root initially so entrypoint can fix volume permissions,
+# then entrypoint drops to nextjs user before starting the server
+CMD ["/entrypoint.sh"]
