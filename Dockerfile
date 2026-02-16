@@ -16,7 +16,7 @@ WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
 COPY . .
 
-# Generate Prisma client
+# Generate Prisma client and run migrations at build time
 RUN npx prisma generate
 
 # Build Next.js in standalone mode
@@ -29,7 +29,7 @@ FROM node:20-alpine AS runner
 WORKDIR /app
 
 ENV NODE_ENV=production
-ENV PORT=3000
+# Railway injects its own PORT variable — do NOT hardcode it
 ENV HOSTNAME="0.0.0.0"
 
 # Create non-root user for security
@@ -44,10 +44,11 @@ COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 
-# Copy Prisma files for migrations
+# Copy Prisma files for runtime and migrations
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
+COPY --from=builder /app/node_modules/prisma ./node_modules/prisma
 
 # Copy data directory for seed
 COPY --from=builder /app/data ./data
@@ -56,5 +57,5 @@ USER nextjs
 
 EXPOSE 3000
 
-# Run database migrations then start the server
-CMD ["sh", "-c", "npx prisma migrate deploy && node server.js"]
+# Start the server — migrations should be run via Railway deploy command or manually
+CMD ["node", "server.js"]
