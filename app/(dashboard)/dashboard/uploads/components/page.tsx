@@ -17,11 +17,7 @@ import {
   Clock,
   Zap,
 } from "lucide-react";
-import {
-  createBrowserClient,
-  storageHelpers,
-  STORAGE_BUCKETS,
-} from "@/lib/supabase";
+// File upload via FormData to Railway Volume (no external storage dependency)
 
 interface Toast {
   id: number;
@@ -135,31 +131,36 @@ export default function UploadComponentsPage() {
     });
 
     try {
-      // Step 1: Upload to storage
+      // Step 1: Upload file via FormData to Railway Volume
       setProgress({
         phase: "uploading",
-        message: "Uploading file to cloud storage...",
+        message: "Uploading file to server storage...",
         percentage: 10,
       });
 
-      const uploadPath = `${selectedType}/${Date.now()}-${file.name}`;
-      const {
-        url: fileUrl,
-        path: filePath,
-        error: uploadError,
-      } = await storageHelpers.uploadFile(
-        STORAGE_BUCKETS.PAYROLL_COMPONENTS,
-        file,
-        uploadPath
-      );
+      const formData = new FormData();
+      formData.append("file", file);
+      formData.append("type", selectedType);
 
-      if (uploadError) {
-        throw new Error(`Upload failed: ${uploadError}`);
+      const uploadResponse = await fetch("/api/uploads", {
+        method: "POST",
+        body: formData,
+      });
+
+      if (!uploadResponse.ok) {
+        const errorData = await uploadResponse.json().catch(() => ({}));
+        throw new Error(errorData.error || `Upload failed: ${uploadResponse.statusText}`);
       }
 
-      // ✅ Step 2: Estimate chunks based on file size (skip prepare to avoid timeout)
-      // Rough estimate: 1MB ≈ 3000-5000 rows, use 10k rows per chunk
-      const estimatedRows = Math.floor((file.size / (1024 * 1024)) * 4000); // Conservative estimate
+      const uploadResult = await uploadResponse.json();
+      const filePath = uploadResult.filePath;
+
+      if (!filePath) {
+        throw new Error("Server did not return file path");
+      }
+
+      // Step 2: Estimate chunks based on file size
+      const estimatedRows = Math.floor((file.size / (1024 * 1024)) * 4000);
       const ROWS_PER_CHUNK = 10000;
       const estimatedChunks = Math.max(
         1,
@@ -172,21 +173,19 @@ export default function UploadComponentsPage() {
         percentage: 15,
       });
 
-      // ✅ Step 3: Process chunks until we get empty response
+      // Step 3: Process chunks until done
       let chunkIndex = 0;
       let totalInserted = 0;
       let completed = false;
 
       while (!completed && chunkIndex < 200) {
-        // Max 200 chunks = 2M rows safety limit
         const chunkProgress =
           20 + Math.round((chunkIndex / estimatedChunks) * 75);
 
         setProgress({
           phase: "processing",
-          message: `Processing batch ${
-            chunkIndex + 1
-          } • ${totalInserted.toLocaleString()} rows inserted`,
+          message: `Processing batch ${chunkIndex + 1
+            } • ${totalInserted.toLocaleString()} rows inserted`,
           percentage: Math.min(95, chunkProgress),
         });
 
@@ -195,7 +194,7 @@ export default function UploadComponentsPage() {
             method: "POST",
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({
-              fileUrl,
+              fileUrl: `/uploads/${filePath}`,
               filePath,
               fileName: file.name,
               fileSize: file.size,
@@ -213,7 +212,6 @@ export default function UploadComponentsPage() {
 
           const result = await processResponse.json();
 
-          // ✅ If no rows processed, we've reached the end
           if (result.processed === 0 || result.inserted === 0) {
             completed = true;
             break;
@@ -223,7 +221,6 @@ export default function UploadComponentsPage() {
           chunkIndex++;
         } catch (error) {
           console.error(`Chunk ${chunkIndex + 1} error:`, error);
-          // Try next chunk
           chunkIndex++;
         }
       }
@@ -234,7 +231,6 @@ export default function UploadComponentsPage() {
         percentage: 100,
       });
 
-      // Show success modal
       showModal(
         "success",
         "File Uploaded Successfully! 🎉",
@@ -266,15 +262,14 @@ export default function UploadComponentsPage() {
         {toasts.map((toast) => (
           <div
             key={toast.id}
-            className={`flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg animate-in slide-in-from-right duration-300 ${
-              toast.type === "success"
-                ? "bg-green-50 border border-green-200"
-                : toast.type === "error"
+            className={`flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg animate-in slide-in-from-right duration-300 ${toast.type === "success"
+              ? "bg-green-50 border border-green-200"
+              : toast.type === "error"
                 ? "bg-red-50 border border-red-200"
                 : toast.type === "warning"
-                ? "bg-yellow-50 border border-yellow-200"
-                : "bg-blue-50 border border-blue-200"
-            }`}
+                  ? "bg-yellow-50 border border-yellow-200"
+                  : "bg-blue-50 border border-blue-200"
+              }`}
           >
             {toast.type === "success" && (
               <CheckCircle className="w-5 h-5 text-green-600 shrink-0" />
@@ -289,15 +284,14 @@ export default function UploadComponentsPage() {
               <AlertCircle className="w-5 h-5 text-blue-600 shrink-0" />
             )}
             <span
-              className={`text-sm font-medium ${
-                toast.type === "success"
-                  ? "text-green-800"
-                  : toast.type === "error"
+              className={`text-sm font-medium ${toast.type === "success"
+                ? "text-green-800"
+                : toast.type === "error"
                   ? "text-red-800"
                   : toast.type === "warning"
-                  ? "text-yellow-800"
-                  : "text-blue-800"
-              }`}
+                    ? "text-yellow-800"
+                    : "text-blue-800"
+                }`}
             >
               {toast.message}
             </span>
@@ -358,15 +352,14 @@ export default function UploadComponentsPage() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
           <div className="bg-white rounded-xl shadow-2xl max-w-md w-full animate-in zoom-in duration-200 max-h-[90vh] overflow-y-auto">
             <div
-              className={`px-6 py-4 border-b flex items-center justify-between ${
-                modal.type === "success"
-                  ? "bg-green-50 border-green-200"
-                  : modal.type === "error"
+              className={`px-6 py-4 border-b flex items-center justify-between ${modal.type === "success"
+                ? "bg-green-50 border-green-200"
+                : modal.type === "error"
                   ? "bg-red-50 border-red-200"
                   : modal.type === "warning"
-                  ? "bg-yellow-50 border-yellow-200"
-                  : "bg-blue-50 border-blue-200"
-              }`}
+                    ? "bg-yellow-50 border-yellow-200"
+                    : "bg-blue-50 border-blue-200"
+                }`}
             >
               <div className="flex items-center gap-3">
                 {modal.type === "success" && (
@@ -380,15 +373,14 @@ export default function UploadComponentsPage() {
                   </div>
                 )}
                 <h3
-                  className={`text-lg font-semibold ${
-                    modal.type === "success"
-                      ? "text-green-900"
-                      : modal.type === "error"
+                  className={`text-lg font-semibold ${modal.type === "success"
+                    ? "text-green-900"
+                    : modal.type === "error"
                       ? "text-red-900"
                       : modal.type === "warning"
-                      ? "text-yellow-900"
-                      : "text-blue-900"
-                  }`}
+                        ? "text-yellow-900"
+                        : "text-blue-900"
+                    }`}
                 >
                   {modal.title}
                 </h3>
@@ -421,15 +413,14 @@ export default function UploadComponentsPage() {
             <div className="px-6 py-4 bg-gray-50 rounded-b-xl flex justify-end gap-3">
               <button
                 onClick={closeModal}
-                className={`px-6 py-2 rounded-lg font-medium transition-colors ${
-                  modal.type === "success"
-                    ? "bg-green-600 text-white hover:bg-green-700"
-                    : modal.type === "error"
+                className={`px-6 py-2 rounded-lg font-medium transition-colors ${modal.type === "success"
+                  ? "bg-green-600 text-white hover:bg-green-700"
+                  : modal.type === "error"
                     ? "bg-red-600 text-white hover:bg-red-700"
                     : modal.type === "warning"
-                    ? "bg-yellow-600 text-white hover:bg-yellow-700"
-                    : "bg-blue-600 text-white hover:bg-blue-700"
-                }`}
+                      ? "bg-yellow-600 text-white hover:bg-yellow-700"
+                      : "bg-blue-600 text-white hover:bg-blue-700"
+                  }`}
               >
                 OK
               </button>
@@ -483,26 +474,23 @@ export default function UploadComponentsPage() {
                 type="button"
                 onClick={() => setSelectedType("HO")}
                 disabled={uploading}
-                className={`relative flex items-center gap-4 p-4 rounded-xl border-2 transition-all ${
-                  selectedType === "HO"
-                    ? "border-indigo-500 bg-indigo-50 shadow-md"
-                    : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
-                } ${uploading ? "opacity-50 cursor-not-allowed" : ""}`}
+                className={`relative flex items-center gap-4 p-4 rounded-xl border-2 transition-all ${selectedType === "HO"
+                  ? "border-indigo-500 bg-indigo-50 shadow-md"
+                  : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
+                  } ${uploading ? "opacity-50 cursor-not-allowed" : ""}`}
               >
                 <div
-                  className={`w-12 h-12 rounded-lg flex items-center justify-center ${
-                    selectedType === "HO" ? "bg-indigo-600" : "bg-gray-300"
-                  }`}
+                  className={`w-12 h-12 rounded-lg flex items-center justify-center ${selectedType === "HO" ? "bg-indigo-600" : "bg-gray-300"
+                    }`}
                 >
                   <Building2 className="w-6 h-6 text-white" />
                 </div>
                 <div className="text-left">
                   <p
-                    className={`font-semibold ${
-                      selectedType === "HO"
-                        ? "text-indigo-900"
-                        : "text-gray-700"
-                    }`}
+                    className={`font-semibold ${selectedType === "HO"
+                      ? "text-indigo-900"
+                      : "text-gray-700"
+                      }`}
                   >
                     Head Office
                   </p>
@@ -520,26 +508,23 @@ export default function UploadComponentsPage() {
                 type="button"
                 onClick={() => setSelectedType("OS")}
                 disabled={uploading}
-                className={`relative flex items-center gap-4 p-4 rounded-xl border-2 transition-all ${
-                  selectedType === "OS"
-                    ? "border-purple-500 bg-purple-50 shadow-md"
-                    : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
-                } ${uploading ? "opacity-50 cursor-not-allowed" : ""}`}
+                className={`relative flex items-center gap-4 p-4 rounded-xl border-2 transition-all ${selectedType === "OS"
+                  ? "border-purple-500 bg-purple-50 shadow-md"
+                  : "border-gray-200 hover:border-gray-300 hover:bg-gray-50"
+                  } ${uploading ? "opacity-50 cursor-not-allowed" : ""}`}
               >
                 <div
-                  className={`w-12 h-12 rounded-lg flex items-center justify-center ${
-                    selectedType === "OS" ? "bg-purple-600" : "bg-gray-300"
-                  }`}
+                  className={`w-12 h-12 rounded-lg flex items-center justify-center ${selectedType === "OS" ? "bg-purple-600" : "bg-gray-300"
+                    }`}
                 >
                   <MapPin className="w-6 h-6 text-white" />
                 </div>
                 <div className="text-left">
                   <p
-                    className={`font-semibold ${
-                      selectedType === "OS"
-                        ? "text-purple-900"
-                        : "text-gray-700"
-                    }`}
+                    className={`font-semibold ${selectedType === "OS"
+                      ? "text-purple-900"
+                      : "text-gray-700"
+                      }`}
                   >
                     Outsource
                   </p>
@@ -571,9 +556,8 @@ export default function UploadComponentsPage() {
               />
               <label
                 htmlFor="file-upload"
-                className={`flex-1 cursor-pointer border-2 border-dashed border-gray-300 rounded-lg p-6 hover:border-indigo-500 transition-colors ${
-                  uploading ? "opacity-50 cursor-not-allowed" : ""
-                }`}
+                className={`flex-1 cursor-pointer border-2 border-dashed border-gray-300 rounded-lg p-6 hover:border-indigo-500 transition-colors ${uploading ? "opacity-50 cursor-not-allowed" : ""
+                  }`}
               >
                 <div className="text-center">
                   <FileText className="w-10 h-10 text-gray-400 mx-auto mb-2" />

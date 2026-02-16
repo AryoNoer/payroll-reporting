@@ -9,7 +9,8 @@ import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import { parse } from "papaparse";
 import * as XLSX from "xlsx";
-import { storageHelpers, STORAGE_BUCKETS } from "@/lib/supabase";
+import * as fs from "fs/promises";
+import * as path from "path";
 
 const ROWS_PER_CHUNK = 10000;
 
@@ -28,19 +29,9 @@ export async function POST(request: NextRequest) {
 
     console.log(`[Process Storage] File: ${filePath}, Chunk: ${chunkIndex}`);
 
-    // Download file dari storage
-    const { data: fileBlob, error: downloadError } = 
-      await storageHelpers.downloadFileAdmin(
-        STORAGE_BUCKETS.PAYROLL_COMPONENTS,
-        filePath
-      );
-
-    if (downloadError || !fileBlob) {
-      throw new Error(`Download failed: ${downloadError}`);
-    }
-
-    const arrayBuffer = await fileBlob.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+  
+    const fullPath = path.join(process.env.UPLOAD_DIR || '/data/uploads', filePath);
+    const buffer = await fs.readFile(fullPath); 
 
     // Parse file
     let allRows: any[] = [];
@@ -138,37 +129,19 @@ export async function POST(request: NextRequest) {
     );
   }
 }
-
-// GET: List files in storage yang belum diproses
 export async function GET(_request: NextRequest) {
   try {
     await requireAuth();
-
-    const { createBrowserClient } = await import("@/lib/supabase");
-    const supabase = createBrowserClient();
-
-    // List files di HO folder
-    const { data: hoFiles } = await supabase.storage
-      .from(STORAGE_BUCKETS.PAYROLL_COMPONENTS)
-      .list("HO");
-
-    // List files di OS folder
-    const { data: osFiles } = await supabase.storage
-      .from(STORAGE_BUCKETS.PAYROLL_COMPONENTS)
-      .list("OS");
-
+    
+    const uploadDir = process.env.UPLOAD_DIR || '/data/uploads';
+    const files = await fs.readdir(uploadDir);
+    
     return NextResponse.json({
       success: true,
-      files: {
-        HO: hoFiles || [],
-        OS: osFiles || [],
-      },
+      files: files.filter((f: string) => f.endsWith('.csv') || f.endsWith('.xlsx') || f.endsWith('.xls'))
     });
   } catch (error) {
     console.error("[List Storage] Error:", error);
-    return NextResponse.json(
-      { error: "Failed to list files" },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: "Failed to list files" }, { status: 500 });
   }
 }

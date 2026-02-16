@@ -204,7 +204,7 @@ export default function UploadsPage() {
         return;
       }
 
-      // Updated file size limit to 500MB (matching Supabase bucket)
+      // Updated file size limit to 500MB (matching server config)
       const MAX_SIZE = 500 * 1024 * 1024; // 500MB
       if (selectedFile.size > MAX_SIZE) {
         showToast("error", "File size exceeds 500MB limit");
@@ -229,7 +229,7 @@ export default function UploadsPage() {
     setError(null);
 
     try {
-      // ✅ Upload file via FormData to backend (backend will handle Supabase upload)
+      // Upload file via FormData to backend (backend saves to Railway Volume)
       setUploadStage("Uploading file...");
       setUploadProgress(20);
 
@@ -350,15 +350,14 @@ export default function UploadsPage() {
         {toasts.map((toast) => (
           <div
             key={toast.id}
-            className={`flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg animate-in slide-in-from-right duration-300 min-w-[300px] ${
-              toast.type === "success"
+            className={`flex items-center gap-3 px-4 py-3 rounded-lg shadow-lg animate-in slide-in-from-right duration-300 min-w-[300px] ${toast.type === "success"
                 ? "bg-green-50 border border-green-200"
                 : toast.type === "error"
-                ? "bg-red-50 border border-red-200"
-                : toast.type === "warning"
-                ? "bg-yellow-50 border border-yellow-200"
-                : "bg-blue-50 border border-blue-200"
-            }`}
+                  ? "bg-red-50 border border-red-200"
+                  : toast.type === "warning"
+                    ? "bg-yellow-50 border border-yellow-200"
+                    : "bg-blue-50 border border-blue-200"
+              }`}
           >
             {toast.type === "success" && (
               <CheckCircle className="w-5 h-5 text-green-600 shrink-0" />
@@ -373,15 +372,14 @@ export default function UploadsPage() {
               <AlertCircle className="w-5 h-5 text-blue-600 shrink-0" />
             )}
             <span
-              className={`text-sm font-medium ${
-                toast.type === "success"
+              className={`text-sm font-medium ${toast.type === "success"
                   ? "text-green-800"
                   : toast.type === "error"
-                  ? "text-red-800"
-                  : toast.type === "warning"
-                  ? "text-yellow-800"
-                  : "text-blue-800"
-              }`}
+                    ? "text-red-800"
+                    : toast.type === "warning"
+                      ? "text-yellow-800"
+                      : "text-blue-800"
+                }`}
             >
               {toast.message}
             </span>
@@ -395,15 +393,14 @@ export default function UploadsPage() {
           <div className="bg-white rounded-xl shadow-2xl max-w-md w-full animate-in zoom-in duration-200">
             {/* Modal Header */}
             <div
-              className={`px-6 py-4 border-b flex items-center justify-between ${
-                modal.type === "success"
+              className={`px-6 py-4 border-b flex items-center justify-between ${modal.type === "success"
                   ? "bg-green-50 border-green-200"
                   : modal.type === "error"
-                  ? "bg-red-50 border-red-200"
-                  : modal.type === "warning"
-                  ? "bg-yellow-50 border-yellow-200"
-                  : "bg-blue-50 border-blue-200"
-              }`}
+                    ? "bg-red-50 border-red-200"
+                    : modal.type === "warning"
+                      ? "bg-yellow-50 border-yellow-200"
+                      : "bg-blue-50 border-blue-200"
+                }`}
             >
               <div className="flex items-center gap-3">
                 {modal.type === "success" && (
@@ -427,15 +424,14 @@ export default function UploadsPage() {
                   </div>
                 )}
                 <h3
-                  className={`text-lg font-semibold ${
-                    modal.type === "success"
+                  className={`text-lg font-semibold ${modal.type === "success"
                       ? "text-green-900"
                       : modal.type === "error"
-                      ? "text-red-900"
-                      : modal.type === "warning"
-                      ? "text-yellow-900"
-                      : "text-blue-900"
-                  }`}
+                        ? "text-red-900"
+                        : modal.type === "warning"
+                          ? "text-yellow-900"
+                          : "text-blue-900"
+                    }`}
                 >
                   {modal.title}
                 </h3>
@@ -491,15 +487,14 @@ export default function UploadsPage() {
             <div className="px-6 py-4 bg-gray-50 rounded-b-xl flex justify-end gap-3">
               <button
                 onClick={closeModal}
-                className={`px-6 py-2 rounded-lg font-medium transition-colors ${
-                  modal.type === "success"
+                className={`px-6 py-2 rounded-lg font-medium transition-colors ${modal.type === "success"
                     ? "bg-green-600 text-white hover:bg-green-700"
                     : modal.type === "error"
-                    ? "bg-red-600 text-white hover:bg-red-700"
-                    : modal.type === "warning"
-                    ? "bg-yellow-600 text-white hover:bg-yellow-700"
-                    : "bg-blue-600 text-white hover:bg-blue-700"
-                }`}
+                      ? "bg-red-600 text-white hover:bg-red-700"
+                      : modal.type === "warning"
+                        ? "bg-yellow-600 text-white hover:bg-yellow-700"
+                        : "bg-blue-600 text-white hover:bg-blue-700"
+                  }`}
               >
                 OK
               </button>
@@ -567,9 +562,8 @@ export default function UploadsPage() {
               />
               <label
                 htmlFor="file-upload"
-                className={`flex-1 cursor-pointer border-2 border-dashed border-gray-300 rounded-lg p-6 hover:border-indigo-500 transition-colors ${
-                  uploading ? "opacity-50 cursor-not-allowed" : ""
-                }`}
+                className={`flex-1 cursor-pointer border-2 border-dashed border-gray-300 rounded-lg p-6 hover:border-indigo-500 transition-colors ${uploading ? "opacity-50 cursor-not-allowed" : ""
+                  }`}
               >
                 <div className="text-center">
                   <Upload className="w-10 h-10 text-gray-400 mx-auto mb-2" />

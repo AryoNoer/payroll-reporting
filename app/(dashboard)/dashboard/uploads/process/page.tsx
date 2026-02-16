@@ -107,9 +107,8 @@ export default function ProcessStoragePage() {
     } catch (error) {
       console.error("Processing error:", error);
       setProgress({
-        message: `❌ Error: ${
-          error instanceof Error ? error.message : "Unknown error"
-        }`,
+        message: `❌ Error: ${error instanceof Error ? error.message : "Unknown error"
+          }`,
       });
     }
   };
@@ -131,7 +130,7 @@ export default function ProcessStoragePage() {
             Process Storage Files
           </h1>
           <p className="text-gray-600 mt-1">
-            Process files yang sudah ada di Supabase Storage
+            Process files yang sudah ada di server storage
           </p>
         </div>
         <button
@@ -268,12 +267,12 @@ export default function ProcessStoragePage() {
           📝 How to Upload Files
         </h3>
         <ol className="text-sm text-blue-800 space-y-1">
-          <li>1. Buka Supabase Dashboard → Storage → payroll-components</li>
+          <li>1. Upload file melalui halaman Upload Components</li>
           <li>
-            2. Upload file ke folder <strong>HO</strong> atau{" "}
+            2. Pilih tipe data <strong>HO</strong> atau{" "}
             <strong>OS</strong>
           </li>
-          <li>3. Refresh halaman ini</li>
+          <li>3. Refresh halaman ini untuk melihat file yang sudah diupload</li>
           <li>4. Klik tombol &quot;Process&quot; untuk memproses file</li>
         </ol>
       </div>

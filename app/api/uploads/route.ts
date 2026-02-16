@@ -1,777 +1,492 @@
+// app/api/uploads/route.ts
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
-// app/api/uploads/route.ts
 import { NextRequest, NextResponse } from "next/server";
-import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
+import { prisma } from "@/lib/prisma";
 import { parse } from "papaparse";
 import { applyCalculationsAndDerivations } from "@/lib/field-calculations";
-import { createClient } from '@supabase/supabase-js';
-
-
-// Create Supabase ADMIN client with SERVICE_ROLE key (bypasses RLS)
-const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
-const supabaseServiceKey = process.env.SUPABASE_SERVICE_ROLE_KEY!;
-
-if (!supabaseUrl || !supabaseServiceKey) {
-  throw new Error('Missing Supabase environment variables');
-}
-
-const supabaseAdmin = createClient(supabaseUrl, supabaseServiceKey, {
-  auth: {
-    autoRefreshToken: false,
-    persistSession: false,
-  },
-});
-
-const STORAGE_BUCKET = 'payroll-uploads';
-
-// Error logger helper
-class UploadError extends Error {
-  constructor(
-    message: string,
-    public code: string,
-    public details?: any
-  ) {
-    super(message);
-    this.name = "UploadError";
-  }
-}
-
-const TEXT_ONLY_FIELDS = new Set([
-  'Jobstatus Code', 'No KTP', 'Gov. Tax File No.', 'Employee No',
-  'Cost Center Code', 'Work Location Code', 'Tax Location Code',
-  'Tax Location Name', 'Company Bank Account', 'Bank Account',
-  'Insurance No BPJSKT', 'Insurance No BPJSKES', 'Tax File No',
-  'Account Name', 'Company Account Name'
-]);
-
-const BATCH_SIZE = 100;
-
-export async function GET() {
-  try {
-    const user = await requireAuth();
-    const uploads = await prisma.upload.findMany({
-      where: { userId: user.id },
-      orderBy: { uploadedAt: "desc" },
-      take: 20,
-    });
-    return NextResponse.json(uploads);
-  } catch (error) {
-    console.error("[GET /api/uploads] Error:", error);
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
-}
-
-// Add this helper at the top
-function corsHeaders() {
-  return {
-    'Access-Control-Allow-Origin': process.env.NEXTAUTH_URL || '*',
-    'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type, Authorization',
-    'Access-Control-Allow-Credentials': 'true',
-  };
-}
-
-// Add OPTIONS handler
-export async function OPTIONS() {
-  return NextResponse.json({}, { 
-    status: 200,
-    headers: corsHeaders()
-  });
-}
+import { writeFile, mkdir, readFile, unlink, readdir } from 'fs/promises';
+import { join } from 'path';
+import { existsSync } from 'fs';
 
 export async function POST(request: NextRequest) {
-  const startTime = Date.now();
-  console.log("\n=== UPLOAD REQUEST STARTED (BACKEND STORAGE) ===");
-  
   try {
-    // Step 1: Authenticate user
-    console.log("[Step 1] Authenticating user...");
-    const user = await requireAuth();
-    console.log(`✓ User authenticated: ${user.email}`);
+    await requireAuth();
 
-    // Step 2: Parse form data
-    console.log("[Step 2] Parsing form data...");
     const formData = await request.formData();
     const file = formData.get("file") as File;
-    const period = formData.get("period") as string;
+    const type = formData.get("type") as string;
 
-    if (!file) {
-      throw new UploadError("File is required", "MISSING_FILE");
-    }
-    if (!period) {
-      throw new UploadError("Period is required", "MISSING_PERIOD");
+    if (!file || !type) {
+      return NextResponse.json({ error: "Missing file or type" }, { status: 400 });
     }
 
-    console.log(`✓ File: ${file.name} (${(file.size / (1024 * 1024)).toFixed(2)} MB)`);
-    console.log(`✓ Period: ${period}`);
+    console.log("Received file:", file.name, file.type, file.size);
 
-    // Step 3: Upload to Supabase Storage (BACKEND with service_role - bypasses RLS)
-    console.log("[Step 3] Uploading to Supabase Storage...");
+    const arrayBuffer = await file.arrayBuffer();
+
+    // Save file ke Railway Volume
+    const uploadDir = process.env.UPLOAD_DIR || '/data/uploads';
+    await mkdir(uploadDir, { recursive: true });
+
     const timestamp = Date.now();
-    const sanitizedFileName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
-    const storagePath = `payroll/${timestamp}-${sanitizedFileName}`;
+    const sanitizedName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
+    const fileName = `${type}_${timestamp}_${sanitizedName}`;
+    const filePath = join(uploadDir, fileName);
 
-    const fileBuffer = await file.arrayBuffer();
-    const { data: uploadData, error: uploadError } = await supabaseAdmin.storage
-      .from(STORAGE_BUCKET)
-      .upload(storagePath, fileBuffer, {
-        contentType: file.type || 'text/csv',
-        cacheControl: '3600',
-        upsert: false,
-      });
+    await writeFile(filePath, Buffer.from(arrayBuffer));
 
-    if (uploadError) {
-      console.error("❌ Storage upload error:", uploadError);
-      throw new UploadError(
-        `Storage upload failed: ${uploadError.message}`,
-        "STORAGE_UPLOAD_ERROR",
-        uploadError
-      );
-    }
-
-    console.log(`✓ File uploaded to storage: ${storagePath}`);
-
-    // Step 4: Download file from storage for processing
-    console.log("[Step 4] Downloading file from storage...");
-    const { data: fileData, error: downloadError } = await supabaseAdmin.storage
-      .from(STORAGE_BUCKET)
-      .download(storagePath);
-
-    if (downloadError || !fileData) {
-      // Clean up uploaded file
-      await supabaseAdmin.storage.from(STORAGE_BUCKET).remove([storagePath]);
-      throw new UploadError(
-        `Failed to download file: ${downloadError?.message}`,
-        "STORAGE_DOWNLOAD_ERROR"
-      );
-    }
-
-    // Convert Blob to text
-    let content = await fileData.text();
-    console.log(`✓ File downloaded: ${content.length} characters`);
-
-    // Step 5: Process file content
-    console.log("[Step 5] Processing file content...");
-    
-    // Handle BOM
-    if (content.charCodeAt(0) === 0xFEFF) {
-      content = content.substring(1);
-      console.log('  ⚠ Removed UTF-8 BOM');
-    }
-    
-    // Normalize line endings
-    content = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
-
-    // Step 6: Handle double header rows
-    console.log("[Step 6] Detecting header structure...");
-    const lines = content.split('\n');
-    let finalContent = content;
-    
-    if (lines.length > 1) {
-      const firstLine = lines[0] || '';
-      const secondLine = lines[1] || '';
-      const firstLineUpper = firstLine.toUpperCase();
-      
-      const hasCategories = 
-        firstLineUpper.includes('SALARY') || 
-        firstLineUpper.includes('ALLOWANCE') ||
-        firstLineUpper.includes('DEDUCTION') ||
-        firstLineUpper.includes('NEUTRAL') ||
-        firstLineUpper.includes('TOTAL');
-      
-      const secondLineHasNames = 
-        secondLine.includes('Name') || 
-        secondLine.includes('Employee');
-      
-      if (hasCategories && secondLineHasNames) {
-        console.log('✓ Detected double header format, merging...');
-        
-        const categoryParse = parse(firstLine, { header: false });
-        const fieldParse = parse(secondLine, { header: false });
-        
-        const categories = (categoryParse.data[0] || []) as string[];
-        const fields = (fieldParse.data[0] || []) as string[];
-        
-        const mergedHeaders: string[] = [];
-        for (let i = 0; i < Math.max(categories.length, fields.length); i++) {
-          const field = (fields[i] || '').trim();
-          if (!field || /^\d+$/.test(field)) {
-            mergedHeaders.push((categories[i] || '').trim() || `Column_${i}`);
-          } else {
-            mergedHeaders.push(field);
-          }
-        }
-        
-        const dataLines = lines.slice(2);
-        finalContent = mergedHeaders.join(',') + '\n' + dataLines.join('\n');
-      }
-    }
-
-    // Step 7: Parse CSV with better delimiter detection
-console.log("[Step 7] Parsing CSV...");
-
-// Remove BOM if present
-if (content.charCodeAt(0) === 0xFEFF) {
-  content = content.substring(1);
-  console.log('  ⚠ Removed UTF-8 BOM');
-}
-
-// Detect delimiter by checking first line
-const firstLine = finalContent.split('\n')[0] || '';
-let detectedDelimiter = ',';
-
-const commaCount = (firstLine.match(/,/g) || []).length;
-const semicolonCount = (firstLine.match(/;/g) || []).length;
-const tabCount = (firstLine.match(/\t/g) || []).length;
-const pipeCount = (firstLine.match(/\|/g) || []).length;
-
-console.log('Delimiter detection:', {
-  commas: commaCount,
-  semicolons: semicolonCount,
-  tabs: tabCount,
-  pipes: pipeCount,
-});
-
-if (semicolonCount > commaCount) {
-  detectedDelimiter = ';';
-  console.log('✓ Detected delimiter: semicolon (;)');
-} else if (tabCount > commaCount) {
-  detectedDelimiter = '\t';
-  console.log('✓ Detected delimiter: tab (\\t)');
-} else if (pipeCount > commaCount) {
-  detectedDelimiter = '|';
-  console.log('✓ Detected delimiter: pipe (|)');
-} else {
-  console.log('✓ Detected delimiter: comma (,)');
-}
-
-// Parse with detected delimiter
-const parseResult = parse(finalContent, {
-  header: true,
-  delimiter: detectedDelimiter, // Use detected delimiter
-  skipEmptyLines: true,
-  newline: '\n',
-  quoteChar: '"',
-  escapeChar: '"',
-  transformHeader: (header: string, index: number) => {
-    const cleanHeader = header.trim();
-    return !cleanHeader ? `Column_${index}` : cleanHeader;
-  },
-  transform: (value: string) => value?.trim() || "",
-});
-
-const { data, errors, meta } = parseResult;
-
-console.log(`✓ CSV parsed: ${(data as any[]).length} rows, ${meta.fields?.length || 0} columns`);
-
-// Log first few column names for debugging
-if (meta.fields && meta.fields.length > 0) {
-  console.log('First 10 columns:', meta.fields.slice(0, 10));
-}
-
-// Enhanced error reporting
-if (errors.length > 0) {
-  console.error(`❌ CSV Parse Errors: ${errors.length}`);
-  
-  // Log first few errors for debugging
-  console.error('First 5 errors:');
-  errors.slice(0, 5).forEach((err: any, idx: number) => {
-    console.error(`  ${idx + 1}. Row ${err.row}: ${err.code} - ${err.message}`);
-  });
-  
-  // Only fail if there are critical errors
-  const criticalErrors = errors.filter((e: any) => 
-    e.code === 'TooManyFields' || 
-    e.code === 'TooFewFields' ||
-    e.code === 'MissingQuotes'
-  );
-  
-  if (criticalErrors.length > 0) {
-    await supabaseAdmin.storage.from(STORAGE_BUCKET).remove([storagePath]);
-    
-    let errorMessage = "CSV parsing failed";
-    if (criticalErrors[0].code === "TooManyFields") {
-      errorMessage = `CSV format error: File has inconsistent columns. Some rows have more fields than headers.`;
-    } else if (criticalErrors[0].code === "TooFewFields") {
-      errorMessage = `CSV format error: File has inconsistent columns. Some rows have fewer fields than headers.`;
-    }
-    
-    throw new UploadError(errorMessage, "PARSE_ERROR", { 
-      totalErrors: criticalErrors.length,
-      sampleErrors: criticalErrors.slice(0, 5).map((e: any) => ({
-        row: e.row,
-        code: e.code,
-        message: e.message
-      }))
-    });
-  } else {
-    console.warn(`⚠ Non-critical parse errors: ${errors.length}, continuing...`);
-  }
-}
-
-if (!data || (data as any[]).length === 0) {
-  await supabaseAdmin.storage.from(STORAGE_BUCKET).remove([storagePath]);
-  throw new UploadError("CSV file is empty", "EMPTY_FILE");
-}
-
-// Validate we got multiple columns (not just 1)
-if (meta.fields && meta.fields.length === 1) {
-  await supabaseAdmin.storage.from(STORAGE_BUCKET).remove([storagePath]);
-  throw new UploadError(
-    `CSV parsing error: Only 1 column detected. Please check your CSV format and delimiter. Detected delimiter: ${detectedDelimiter}`,
-    "INVALID_FORMAT",
-    {
-      detectedColumns: meta.fields,
-      detectedDelimiter,
-      suggestion: "Your CSV might be using a different delimiter (semicolon, tab, or pipe). Please check your export settings."
-    }
-  );
-}
-
-    // Step 8: Validate headers
-    console.log("[Step 8] Validating CSV structure...");
-    const requiredColumns = ["Name", "Employee No"];
-    const headers = Object.keys((data as any[])[0]);
-    const missingColumns = requiredColumns.filter(
-      col => !headers.some(h => h.includes(col))
-    );
-
-    if (missingColumns.length > 0) {
-      await supabaseAdmin.storage.from(STORAGE_BUCKET).remove([storagePath]);
-      throw new UploadError(
-        `Missing required columns: ${missingColumns.join(", ")}`,
-        "MISSING_COLUMNS",
-        { missing: missingColumns }
-      );
-    }
-
-    // Step 9: Check for duplicates WITHIN the file
-    console.log("[Step 9] Checking for duplicate Employee No in file...");
-    const employeeNosInFile = new Set<string>();
-    const duplicatesInFile: string[] = [];
-    
-    (data as any[]).forEach((row, index) => {
-      const empNo = String(row["Employee No"] || "").trim();
-      if (empNo && employeeNosInFile.has(empNo)) {
-        duplicatesInFile.push(`${empNo} (Row ${index + 2})`);
-      }
-      if (empNo) employeeNosInFile.add(empNo);
+    console.log('File uploaded to Railway Volume:', {
+      path: filePath,
+      size: file.size,
+      type,
     });
 
-    if (duplicatesInFile.length > 0) {
-      console.error(`❌ Found ${duplicatesInFile.length} duplicate Employee No in file`);
-      await supabaseAdmin.storage.from(STORAGE_BUCKET).remove([storagePath]);
-      
-      throw new UploadError(
-        `File contains duplicate Employee No. Please remove duplicates and try again.`,
-        "DUPLICATE_IN_FILE",
-        {
-          duplicateCount: duplicatesInFile.length,
-          duplicates: duplicatesInFile.slice(0, 10),
-          message: duplicatesInFile.length > 10 
-            ? `Showing first 10 of ${duplicatesInFile.length} duplicates`
-            : undefined
-        }
-      );
-    }
-    console.log(`✓ No duplicates within file`);
-
-    // Step 10: Check for duplicates with SAME PERIOD
-    console.log("[Step 10] Checking for duplicates with same period...");
-    const uploadPeriod = new Date(period + "-01");
-    
-    const existingEmployees = await prisma.employee.findMany({
-      where: {
-        employeeNo: { in: Array.from(employeeNosInFile) },
-        upload: {
-          period: uploadPeriod,
-          userId: user.id
-        }
-      },
-      select: {
-        employeeNo: true,
-        name: true,
-        upload: {
-          select: {
-            originalName: true,
-            uploadedAt: true
-          }
-        }
-      }
-    });
-
-    if (existingEmployees.length > 0) {
-      console.warn(`⚠ Found ${existingEmployees.length} employees already exist for period ${period}`);
-      console.log(`  Will skip these ${existingEmployees.length} duplicate employees during insert`);
-    } else {
-      console.log(`✓ No duplicates with same period found`);
-    }
-
-    // Step 11: Create database record
-    console.log("[Step 11] Creating upload record...");
-    const upload = await prisma.upload.create({
-      data: {
-        fileName: storagePath, // Store storage path
-        originalName: file.name,
-        fileSize: file.size,
-        rowCount: (data as any[]).length,
-        period: uploadPeriod,
-        status: "PROCESSING",
-        userId: user.id,
-      },
-    });
-    console.log(`✓ Upload record created: ${upload.id}`);
-
-    // Step 12: Start background processing
-    console.log("[Step 12] Starting background processing...");
-    processUploadData(upload.id, data as any[], headers).catch((error) => {
-      console.error("❌ Background processing error:", error);
-    });
-
-    const duration = Date.now() - startTime;
-    console.log(`✓ Upload completed in ${duration}ms`);
-    console.log("=== UPLOAD REQUEST COMPLETED ===\n");
+    const fileUrl = `/uploads/${fileName}`;
+    const storedPath = fileName;
 
     return NextResponse.json({
-      ...upload,
-      warning: existingEmployees.length > 0 ? {
-        duplicateCount: existingEmployees.length,
-        message: `${existingEmployees.length} employees already exist for this period and will be skipped`
-      } : undefined
-    }, {
-      headers: corsHeaders()
+      success: true,
+      message: "File uploaded to Railway Volume",
+      fileUrl,
+      filePath: storedPath,
+      fileName: file.name,
+      fileSize: file.size,
+      type,
     });
 
-  } catch (error) {
-    const duration = Date.now() - startTime;
-    console.error("\n❌ UPLOAD FAILED");
-    console.error(`Duration: ${duration}ms`);
-    console.error("Error:", error);
-    
-    if (error instanceof UploadError) {
-      return NextResponse.json(
-        { 
-          error: error.message,
-          code: error.code,
-          details: error.details
-        },
-        { status: 400, 
-          headers: corsHeaders()
-        }
-      );
-    }
-
+  } catch (error: any) {
+    console.error("Upload error:", error);
     return NextResponse.json(
-      { 
-        error: "Failed to upload file", 
-        message: error instanceof Error ? error.message : "Unknown error"
-      },
-      { status: 500 
-      , headers: corsHeaders()
-      }
+      { error: error.message || "Upload failed" },
+      { status: 500 }
     );
   }
 }
 
-function parseValue(key: string, value: any): any {
-  if (value === null || value === undefined || value === '') {
-    return value;
-  }
+export async function GET(request: NextRequest) {
+  try {
+    await requireAuth();
 
-  if (typeof value !== 'string') {
-    return value;
-  }
+    const searchParams = request.nextUrl.searchParams;
+    const action = searchParams.get("action");
 
-  if (TEXT_ONLY_FIELDS.has(key)) {
-    return value.trim();
-  }
+    // Process chunk dari file yang sudah diupload
+    if (action === "processChunk") {
+      return await processChunk(request);
+    }
 
-  const cleanValue = value.replace(/['"',]/g, '').trim();
-  
-  if (/^-?\d+\.?\d*$/.test(cleanValue)) {
-    const numValue = parseFloat(cleanValue);
-    return isNaN(numValue) ? cleanValue : numValue;
-  }
+    // Get list of storage files (HO & OS)
+    if (action === "getStorageFiles") {
+      const type = searchParams.get("type") || "HO";
+      const files = await getStorageFiles(type);
+      return NextResponse.json({ success: true, files });
+    }
 
-  return cleanValue;
+    // Process file from storage (existing files)
+    if (action === "processStorageFile") {
+      return await processStorageFile(request);
+    }
+
+    return NextResponse.json({ error: "Invalid action" }, { status: 400 });
+
+  } catch (error: any) {
+    console.error("GET error:", error);
+    return NextResponse.json(
+      { error: error.message || "Request failed" },
+      { status: 500 }
+    );
+  }
 }
 
-async function processUploadData(
-  uploadId: string,
-  rows: any[],
-  headers: string[]
-) {
-  const startTime = Date.now();
-  console.log(`\n${'='.repeat(70)}`);
-  console.log(`🚀 PROCESSING UPLOAD ${uploadId}`);
-  console.log(`${'='.repeat(70)}\n`);
+async function processChunk(request: NextRequest) {
+  const searchParams = request.nextUrl.searchParams;
+  const filePath = searchParams.get("filePath");
+  const fileName = searchParams.get("fileName");
+  const type = searchParams.get("type");
+  const chunkIndexStr = searchParams.get("chunkIndex");
 
-  const errorLog: Array<{
-    row: number;
-    error: string;
-    data: any;
-  }> = [];
+  if (!filePath || !fileName || !type || chunkIndexStr === null) {
+    return NextResponse.json({ error: "Missing parameters" }, { status: 400 });
+  }
+
+  const chunkIndex = parseInt(chunkIndexStr, 10);
+  const ROWS_PER_CHUNK = 5000;
+
+  console.log(`Processing chunk ${chunkIndex + 1} of ${fileName}`);
 
   try {
-    await prisma.upload.update({
-      where: { id: uploadId },
-      data: { progress: 0 },
-    });
+    // Read file dari Railway Volume
+    const uploadDir = process.env.UPLOAD_DIR || '/data/uploads';
+    const fullPath = join(uploadDir, filePath);
 
-    console.log("[Step 1] Loading component mappings...");
-    const components = await prisma.component.findMany({
-      where: { isActive: true },
-    });
-    console.log(`✓ Loaded ${components.length} components\n`);
+    if (!existsSync(fullPath)) {
+      throw new Error(`File not found: ${filePath}`);
+    }
 
-    const componentMap = new Map(components.map(c => [c.name, c]));
+    const arrayBuffer = await readFile(fullPath);
+    const buffer = Buffer.from(arrayBuffer);
 
-    const dedicatedFields = new Set([
-      'No', 'Name', 'Employee No', 'Gender', 'No KTP', 'Gov. Tax File No.',
-      'Position', 'Directorate', 'Org Unit', 'Grade', 'Employment Status',
-      'Join Date', 'Terminate Date', 'Length of Service', 'Tax Status'
-    ]);
+    let allRows: any[] = [];
 
-    const skipFields = new Set(['No']);
+    // Parse CSV
+    if (fileName.endsWith(".csv")) {
+      const content = buffer.toString("utf-8");
+      const parseResult = parse(content, {
+        header: true,
+        skipEmptyLines: true,
+        transformHeader: (header: string) => header.trim(),
+      });
+      allRows = parseResult.data as any[];
+    }
+    // Parse Excel
+    else if (fileName.endsWith(".xlsx") || fileName.endsWith(".xls")) {
+      const XLSX = await import("xlsx");
+      const workbook = XLSX.read(buffer, { type: "buffer" });
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      allRows = XLSX.utils.sheet_to_json(sheet);
+    } else {
+      return NextResponse.json({ error: "Unsupported file format" }, { status: 400 });
+    }
 
-    const parseDate = (dateStr: string | null | undefined): Date | null => {
-      if (!dateStr || dateStr === '') return null;
-      try {
-        const date = new Date(dateStr);
-        return isNaN(date.getTime()) ? null : date;
-      } catch {
-        return null;
-      }
-    };
+    console.log(`Total rows in file: ${allRows.length}`);
 
-    console.log("[Step 2] Processing rows in batches...\n");
-    let processedCount = 0;
-    let skippedCount = 0;
-    let duplicateCount = 0;
-    const totalBatches = Math.ceil(rows.length / BATCH_SIZE);
+    // Get chunk
+    const startIdx = chunkIndex * ROWS_PER_CHUNK;
+    const endIdx = startIdx + ROWS_PER_CHUNK;
+    const chunkRows = allRows.slice(startIdx, endIdx);
 
-    for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
-      const batchStart = batchIndex * BATCH_SIZE;
-      const batchEnd = Math.min(batchStart + BATCH_SIZE, rows.length);
-      const batchRows = rows.slice(batchStart, batchEnd);
+    if (chunkRows.length === 0) {
+      console.log("No more rows to process");
+      return NextResponse.json({
+        success: true,
+        chunkIndex,
+        inserted: 0,
+        hasMore: false,
+        message: "Processing complete",
+      });
+    }
 
-      const batchStartTime = Date.now();
-      console.log(`[Batch ${batchIndex + 1}/${totalBatches}] Processing rows ${batchStart + 1}-${batchEnd}...`);
+    console.log(`Processing rows ${startIdx + 1} to ${Math.min(endIdx, allRows.length)}`);
 
-      const batchData: any[] = [];
+    // Apply calculations & derivations
+    const processedRows = chunkRows.map((row) =>
+      applyCalculationsAndDerivations(row)
+    );
 
-      for (let i = 0; i < batchRows.length; i++) {
-        const row = batchRows[i];
-        const rowNumber = batchStart + i + 1;
-
-        try {
-          if (!row.Name && !row["Employee No"]) {
-            skippedCount++;
-            continue;
-          }
-
-          const salaryData: Record<string, any> = {};
-          const allowanceData: Record<string, any> = {};
-          const deductionData: Record<string, any> = {};
-          const neutralData: Record<string, any> = {};
-
-          for (const [key, value] of Object.entries(row)) {
-            if (skipFields.has(key)) continue;
-            if (!key || key.startsWith("Column_")) continue;
-
-            const parsedValue = parseValue(key, value);
-
-            if (dedicatedFields.has(key)) {
-              neutralData[key] = parsedValue;
-              continue;
-            }
-
-            const component = componentMap.get(key);
-            
-            if (component) {
-              switch (component.type) {
-                case "ALLOWANCE":
-                  allowanceData[key] = parsedValue;
-                  break;
-                case "DEDUCTION":
-                  deductionData[key] = parsedValue;
-                  break;
-                case "NEUTRAL":
-                  neutralData[key] = parsedValue;
-                  break;
-              }
-            } else {
-              const keyLower = key.toLowerCase();
-              
-              if (
-                key === "Basic Salary" ||
-                key === "Basic Salary Tambahan" ||
-                key === "Rapel Salary" ||
-                keyLower.includes("salary") || 
-                keyLower.includes("gaji")
-              ) {
-                salaryData[key] = parsedValue;
-              } else if (
-                keyLower.includes("tunjangan") || 
-                keyLower.includes("allowance") ||
-                keyLower.includes("insentif") ||
-                keyLower.includes("bonus") ||
-                keyLower.includes("uang") ||
-                keyLower.includes("claim") ||
-                keyLower.includes("santunan") ||
-                keyLower.includes("rapel") ||
-                keyLower.includes("reward") ||
-                keyLower.includes("lemburan") ||
-                (key.startsWith("BPJS") && key.includes("Pemberi Kerja"))
-              ) {
-                allowanceData[key] = parsedValue;
-              } else if (
-                keyLower.includes("potongan") ||
-                keyLower.includes("pot.") ||
-                keyLower.includes("deduction") ||
-                (keyLower.includes("tax") && !keyLower.includes("tax status") && !keyLower.includes("tax location")) ||
-                (key.startsWith("BPJS") && (key.includes("Gross") || key.includes("Kemitraan") || 
-                  (key.includes("BPJS") && !key.includes("Pemberi Kerja"))))
-              ) {
-                deductionData[key] = parsedValue;
-              } else {
-                neutralData[key] = parsedValue;
-              }
-            }
-          }
-
-          const combinedData = {
-            ...row,
-            ...salaryData,
-            ...allowanceData,
-            ...deductionData,
-            ...neutralData
-          };
-
-          const calculatedData = applyCalculationsAndDerivations(combinedData);
-
-          const calculatedFields = [
-            'Cost Center By Function', 'Coa', 'Department', 'Tax Location Code',
-            'Tax Location Name', 'Bank Account', 'Total Basic Salary', 'Total Uang Makan',
-            'Total Uang Transport', 'Total Tunjangan Jabatan', 'Total Insentif Inhouse',
-            'Total Sisa Cuti', 'Total Uang Pisah', 'Total Tunjangan Operasional',
-            'Total Komisi Karyawan', 'Total Insentif Mitra', 'Total Bonus Inhouse',
-            'Total Bonus Mitra', 'Total Lembur', 'Total Perjalanan Dinas',
-            'Total Biaya Pengobatan Karyawan', 'Total THR', 'Total BPJS TK',
-            'Total BPJS Kes', 'Total Deduction'
-          ];
-
-          calculatedFields.forEach(field => {
-            if (calculatedData[field] !== undefined) {
-              neutralData[field] = calculatedData[field];
-            }
-          });
-
-          batchData.push({
-            uploadId,
-            employeeNo: String(row["Employee No"] || ""),
-            name: String(row["Name"] || ""),
-            gender: row["Gender"] || null,
-            noKTP: row["No KTP"] || null,
-            taxFileNo: row["Gov. Tax File No."] || null,
-            position: row["Position"] || null,
-            directorate: row["Directorate"] || null,
-            orgUnit: row["Org Unit"] || null,
-            grade: row["Grade"] || null,
-            employmentStatus: row["Employment Status"] || null,
-            joinDate: parseDate(row["Join Date"]),
-            terminateDate: parseDate(row["Terminate Date"]),
-            lengthOfService: row["Length of Service"] || null,
-            taxStatus: row["Tax Status"] || null,
-            salaryData,
-            allowanceData,
-            deductionData,
-            neutralData,
-          });
-
-        } catch (rowError) {
-          const errorMessage = rowError instanceof Error ? rowError.message : "Unknown error";
-          errorLog.push({
-            row: rowNumber,
-            error: errorMessage,
-            data: {
-              name: row["Name"],
-              employeeNo: row["Employee No"],
-            }
-          });
+    // Map to Employee schema
+    const employees = processedRows
+      .filter((row) => {
+        const employeeNo = String(row["Employee No"] || "").trim();
+        if (!employeeNo) {
+          console.warn("Skipping row with missing Employee No");
+          return false;
         }
-      }
+        return true;
+      })
+      .map((row) => {
+        const employeeNo = String(row["Employee No"]).trim();
+        const bulanReport = String(row["Bulan Report"] || "").trim();
 
-      // Batch insert with skipDuplicates
-      if (batchData.length > 0) {
+        // Build the employee object
+        const employee: any = {
+          employeeNo,
+          bulanReport,
+          uploadFilePath: filePath,
+          type,
+        };
+
+        // Map all fields from row to employee
+        for (const [key, value] of Object.entries(row)) {
+          if (key === "Employee No" || key === "Bulan Report") continue;
+
+          const fieldName = key
+            .replace(/[^a-zA-Z0-9]/g, "_")
+            .replace(/^_+|_+$/g, "")
+            .toLowerCase();
+
+          if (value !== null && value !== undefined && value !== "") {
+            employee[fieldName] = String(value);
+          } else {
+            employee[fieldName] = null;
+          }
+        }
+
+        return employee;
+      });
+
+    // Insert to database
+    let inserted = 0;
+    const BATCH_SIZE = 1000;
+
+    for (let i = 0; i < employees.length; i += BATCH_SIZE) {
+      const batch = employees.slice(i, i + BATCH_SIZE);
+
+      try {
         const result = await prisma.employee.createMany({
-          data: batchData,
+          data: batch,
           skipDuplicates: true,
         });
 
-        const actualInserted = result.count;
-        const skippedInBatch = batchData.length - actualInserted;
-        
-        processedCount += actualInserted;
-        duplicateCount += skippedInBatch;
-        
-        const batchDuration = Date.now() - batchStartTime;
-        console.log(`  ✓ Inserted ${actualInserted} rows, skipped ${skippedInBatch} duplicates in ${batchDuration}ms`);
+        inserted += result.count;
+        console.log(`Batch ${Math.floor(i / BATCH_SIZE) + 1}: Inserted ${result.count} rows`);
+
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      } catch (error) {
+        console.error(`Batch insert failed:`, error);
       }
-
-      const currentProgress = Math.round((batchEnd / rows.length) * 100);
-      await prisma.upload.update({
-        where: { id: uploadId },
-        data: { progress: currentProgress },
-      });
-
-      const elapsed = ((Date.now() - startTime) / 1000).toFixed(1);
-      console.log(`  📊 Progress: ${currentProgress}% | Elapsed: ${elapsed}s\n`);
     }
 
-    const duration = Date.now() - startTime;
-    
-    console.log(`${'='.repeat(70)}`);
-    console.log("✅ PROCESSING SUMMARY");
-    console.log(`${'='.repeat(70)}`);
-    console.log(`✓ Successfully inserted: ${processedCount} rows`);
-    console.log(`⊘ Skipped (empty): ${skippedCount} rows`);
-    console.log(`⊘ Skipped (duplicate): ${duplicateCount} rows`);
-    console.log(`✗ Failed: ${errorLog.length} rows`);
-    console.log(`⏱ Total Duration: ${(duration / 1000).toFixed(2)}s`);
-    console.log(`${'='.repeat(70)}\n`);
+    console.log(`Chunk ${chunkIndex + 1} complete: ${inserted}/${chunkRows.length} rows inserted`);
 
-    const statusMessage = duplicateCount > 0 
-      ? `Completed: ${processedCount} inserted, ${duplicateCount} duplicates skipped`
-      : errorLog.length > 0 
-      ? `Completed with ${errorLog.length} errors`
-      : undefined;
+    const hasMore = endIdx < allRows.length;
 
-    await prisma.upload.update({
-      where: { id: uploadId },
-      data: { 
-        status: "COMPLETED",
-        progress: 100,
-        rowCount: processedCount,
-        errorMessage: statusMessage
-      },
+    return NextResponse.json({
+      success: true,
+      chunkIndex,
+      inserted,
+      totalRows: allRows.length,
+      processedSoFar: Math.min(endIdx, allRows.length),
+      hasMore,
     });
 
-    console.log("✅ UPLOAD PROCESSING COMPLETED\n");
+  } catch (error: any) {
+    console.error("Chunk processing error:", error);
+    return NextResponse.json(
+      { error: error.message || "Processing failed" },
+      { status: 500 }
+    );
+  }
+}
 
+async function getStorageFiles(type: string) {
+  try {
+    const uploadDir = process.env.UPLOAD_DIR || '/data/uploads';
+
+    if (!existsSync(uploadDir)) {
+      return [];
+    }
+
+    const allFiles = await readdir(uploadDir);
+
+    // Filter by type (HO or OS)
+    const filteredFiles = allFiles
+      .filter(f => f.startsWith(`${type}_`))
+      .filter(f => f.endsWith('.csv') || f.endsWith('.xlsx') || f.endsWith('.xls'))
+      .map(name => ({
+        name,
+        id: name,
+        created_at: new Date().toISOString(), // Railway Volume doesn't store metadata
+      }));
+
+    return filteredFiles;
   } catch (error) {
-    console.error("\n❌ PROCESSING FAILED");
-    console.error("Error:", error);
-    
-    await prisma.upload.update({
-      where: { id: uploadId },
-      data: {
-        status: "FAILED",
-        progress: 0,
-        errorMessage: error instanceof Error ? error.message : "Processing failed",
-      },
+    console.error(`Error listing ${type} files:`, error);
+    return [];
+  }
+}
+
+async function processStorageFile(request: NextRequest) {
+  const searchParams = request.nextUrl.searchParams;
+  const filePath = searchParams.get("filePath");
+  const type = searchParams.get("type");
+  const chunkIndexStr = searchParams.get("chunkIndex");
+
+  if (!filePath || !type || chunkIndexStr === null) {
+    return NextResponse.json({ error: "Missing parameters" }, { status: 400 });
+  }
+
+  const chunkIndex = parseInt(chunkIndexStr, 10);
+  const ROWS_PER_CHUNK = 5000;
+
+  console.log(`[Storage] Processing ${filePath}, chunk ${chunkIndex + 1}`);
+
+  try {
+    // Read file dari Railway Volume
+    const uploadDir = process.env.UPLOAD_DIR || '/data/uploads';
+    const fullPath = join(uploadDir, filePath);
+
+    if (!existsSync(fullPath)) {
+      throw new Error(`File not found: ${filePath}`);
+    }
+
+    const arrayBuffer = await readFile(fullPath);
+    const buffer = Buffer.from(arrayBuffer);
+
+    let allRows: any[] = [];
+
+    // Parse CSV
+    if (filePath.endsWith(".csv")) {
+      const content = buffer.toString("utf-8");
+      const parseResult = parse(content, {
+        header: true,
+        skipEmptyLines: true,
+        transformHeader: (header: string) => header.trim(),
+      });
+      allRows = parseResult.data as any[];
+    }
+    // Parse Excel
+    else if (filePath.endsWith(".xlsx") || filePath.endsWith(".xls")) {
+      const XLSX = await import("xlsx");
+      const workbook = XLSX.read(buffer, { type: "buffer" });
+      const sheetName = workbook.SheetNames[0];
+      const sheet = workbook.Sheets[sheetName];
+      allRows = XLSX.utils.sheet_to_json(sheet);
+    } else {
+      return NextResponse.json({ error: "Unsupported file format" }, { status: 400 });
+    }
+
+    console.log(`[Storage] Total rows: ${allRows.length}`);
+
+    // Get chunk
+    const startIdx = chunkIndex * ROWS_PER_CHUNK;
+    const endIdx = startIdx + ROWS_PER_CHUNK;
+    const chunkRows = allRows.slice(startIdx, endIdx);
+
+    if (chunkRows.length === 0) {
+      return NextResponse.json({
+        success: true,
+        chunkIndex,
+        inserted: 0,
+        hasMore: false,
+        message: "Processing complete",
+      });
+    }
+
+    // Apply calculations
+    const processedRows = chunkRows.map((row) =>
+      applyCalculationsAndDerivations(row)
+    );
+
+    // Map to Employee schema
+    const employees = processedRows
+      .filter((row) => {
+        const employeeNo = String(row["Employee No"] || "").trim();
+        return !!employeeNo;
+      })
+      .map((row) => {
+        const employeeNo = String(row["Employee No"]).trim();
+        const bulanReport = String(row["Bulan Report"] || "").trim();
+
+        const employee: any = {
+          employeeNo,
+          bulanReport,
+          uploadFilePath: filePath,
+          type,
+        };
+
+        for (const [key, value] of Object.entries(row)) {
+          if (key === "Employee No" || key === "Bulan Report") continue;
+
+          const fieldName = key
+            .replace(/[^a-zA-Z0-9]/g, "_")
+            .replace(/^_+|_+$/g, "")
+            .toLowerCase();
+
+          if (value !== null && value !== undefined && value !== "") {
+            employee[fieldName] = String(value);
+          } else {
+            employee[fieldName] = null;
+          }
+        }
+
+        return employee;
+      });
+
+    // Insert to database
+    let inserted = 0;
+    const BATCH_SIZE = 1000;
+
+    for (let i = 0; i < employees.length; i += BATCH_SIZE) {
+      const batch = employees.slice(i, i + BATCH_SIZE);
+
+      try {
+        const result = await prisma.employee.createMany({
+          data: batch,
+          skipDuplicates: true,
+        });
+
+        inserted += result.count;
+        await new Promise((resolve) => setTimeout(resolve, 100));
+      } catch (error) {
+        console.error(`Batch insert failed:`, error);
+      }
+    }
+
+    console.log(`[Storage] Chunk ${chunkIndex + 1}: ${inserted}/${chunkRows.length} inserted`);
+
+    const hasMore = endIdx < allRows.length;
+
+    return NextResponse.json({
+      success: true,
+      chunkIndex,
+      inserted,
+      totalRows: allRows.length,
+      processedSoFar: Math.min(endIdx, allRows.length),
+      hasMore,
     });
+
+  } catch (error: any) {
+    console.error("[Storage] Error:", error);
+    return NextResponse.json(
+      { error: error.message || "Processing failed" },
+      { status: 500 }
+    );
+  }
+}
+
+export async function DELETE(request: NextRequest) {
+  try {
+    await requireAuth();
+
+    const { searchParams } = new URL(request.url);
+    const filePath = searchParams.get("filePath");
+
+    if (!filePath) {
+      return NextResponse.json({ error: "Missing filePath" }, { status: 400 });
+    }
+
+    console.log("Deleting file:", filePath);
+
+    // Delete file dari Railway Volume
+    const uploadDir = process.env.UPLOAD_DIR || '/data/uploads';
+    const fullPath = join(uploadDir, filePath);
+
+    if (existsSync(fullPath)) {
+      await unlink(fullPath);
+      console.log("File deleted from Railway Volume:", filePath);
+    } else {
+      console.warn("File not found, skipping deletion:", filePath);
+    }
+
+    // Delete associated Upload record (employees cascade-delete via schema)
+    const upload = await prisma.upload.findFirst({
+      where: { fileName: filePath },
+    });
+
+    let deletedCount = 0;
+    if (upload) {
+      // Deleting the Upload will cascade-delete all associated employees
+      await prisma.upload.delete({ where: { id: upload.id } });
+      deletedCount = upload.rowCount;
+      console.log(`Deleted upload ${upload.id} and associated employees`);
+    } else {
+      console.warn("No upload record found for file:", filePath);
+    }
+
+    return NextResponse.json({
+      success: true,
+      message: `File and ${deletedCount} records deleted`,
+      deletedRecords: deletedCount,
+    });
+
+  } catch (error: any) {
+    console.error("Delete error:", error);
+    return NextResponse.json(
+      { error: error.message || "Delete failed" },
+      { status: 500 }
+    );
   }
 }

@@ -1,21 +1,17 @@
-/** @type {import('next').NextConfig} */
-const nextConfig = {
-  // Disable body parsing size limit for API routes
-  api: {
-    bodyParser: {
-      sizeLimit: '500mb',
-    },
-    responseLimit: false,
-  },
-  
-  // Increase max duration for serverless functions (Vercel Pro: 60s, Hobby: 10s)
+import type { NextConfig } from 'next';
+
+const nextConfig: NextConfig = {
+  // Standalone output for Docker/Railway deployment
+  output: 'standalone',
+
+  // Server Actions body size limit (500MB for large file uploads)
   experimental: {
     serverActions: {
       bodySizeLimit: '500mb',
     },
   },
-  
-  // Add headers for CORS
+
+  // CORS headers for API routes
   async headers() {
     return [
       {
@@ -31,4 +27,4 @@ const nextConfig = {
   },
 };
 
-module.exports = nextConfig;
+export default nextConfig;

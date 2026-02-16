@@ -1,14 +1,13 @@
 // app/api/uploads/components/route.ts
 /* eslint-disable @typescript-eslint/no-explicit-any */
-// app/api/uploads/components/route.ts
-// Ganti SELURUH file dengan ini:
 
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 import { parse } from "papaparse";
 import * as XLSX from "xlsx";
-import { storageHelpers, STORAGE_BUCKETS } from "@/lib/supabase";
+import * as fs from "fs/promises";
+import * as path from "path";
 
 const MAX_FILE_SIZE = 500 * 1024 * 1024;
 const ROWS_PER_REQUEST = 10000;
@@ -28,19 +27,9 @@ export async function POST(request: NextRequest) {
     }
 
     console.log(`[Upload] Processing chunk ${chunkIndex + 1} of ${fileName}`);
-
-    // ✅ Download file
-    const { data: fileBlob, error: downloadError } = await storageHelpers.downloadFileAdmin(
-      STORAGE_BUCKETS.PAYROLL_COMPONENTS,
-      filePath
-    );
-
-    if (downloadError || !fileBlob) {
-      throw new Error(`Download failed: ${downloadError}`);
-    }
-
-    const arrayBuffer = await fileBlob.arrayBuffer();
-    const buffer = Buffer.from(arrayBuffer);
+    // Read file dari Railway Volume
+    const fullPath = path.join(process.env.UPLOAD_DIR || '/data/uploads', filePath);
+    const buffer = await fs.readFile(fullPath);
 
     let allRows: any[] = [];
 
