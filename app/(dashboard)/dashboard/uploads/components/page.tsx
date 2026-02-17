@@ -154,38 +154,31 @@ export default function UploadComponentsPage() {
 
       const uploadResult = await uploadResponse.json();
       const filePath = uploadResult.filePath;
+      const totalChunks = uploadResult.totalChunks || 1;
+      const totalRows = uploadResult.totalRows || 0;
 
       if (!filePath) {
         throw new Error("Server did not return file path");
       }
 
-      // Step 2: Estimate chunks based on file size
-      const estimatedRows = Math.floor((file.size / (1024 * 1024)) * 4000);
-      const ROWS_PER_CHUNK = 10000;
-      const estimatedChunks = Math.max(
-        1,
-        Math.ceil(estimatedRows / ROWS_PER_CHUNK)
-      );
-
       setProgress({
         phase: "processing",
-        message: `Starting processing (estimated ${estimatedChunks} batches)...`,
+        message: `Starting processing (${totalChunks} batches, ${totalRows.toLocaleString()} rows)...`,
         percentage: 15,
       });
 
-      // Step 3: Process chunks until done
+      // Step 2: Process chunks until done
       let chunkIndex = 0;
       let totalInserted = 0;
       let completed = false;
 
-      while (!completed && chunkIndex < 200) {
+      while (!completed && chunkIndex < totalChunks) {
         const chunkProgress =
-          20 + Math.round((chunkIndex / estimatedChunks) * 75);
+          20 + Math.round((chunkIndex / totalChunks) * 75);
 
         setProgress({
           phase: "processing",
-          message: `Processing batch ${chunkIndex + 1
-            } • ${totalInserted.toLocaleString()} rows inserted`,
+          message: `Processing batch ${chunkIndex + 1}/${totalChunks} • ${totalInserted.toLocaleString()} rows inserted`,
           percentage: Math.min(95, chunkProgress),
         });
 
@@ -201,6 +194,7 @@ export default function UploadComponentsPage() {
               type: selectedType,
               action: "process",
               chunkIndex,
+              totalChunks,
             }),
           });
 
@@ -212,12 +206,13 @@ export default function UploadComponentsPage() {
 
           const result = await processResponse.json();
 
-          if (result.processed === 0 || result.inserted === 0) {
+          totalInserted += result.inserted || 0;
+
+          if (!result.hasMore) {
             completed = true;
             break;
           }
 
-          totalInserted += result.inserted;
           chunkIndex++;
         } catch (error) {
           console.error(`Chunk ${chunkIndex + 1} error:`, error);

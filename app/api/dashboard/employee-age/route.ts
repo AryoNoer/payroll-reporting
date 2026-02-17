@@ -14,30 +14,37 @@ function getAgeCacheKey(year: string | null, month: string | null): string {
 }
 
 function getMonthName(monthNum: string): string {
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
-                  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   return months[parseInt(monthNum) - 1];
 }
 
 function calculateAge(birthDate: string): number {
   try {
     const cleanedDate = birthDate.trim();
-    
+
     // Skip if it's "Information" or other placeholder text
-    if (cleanedDate.toLowerCase() === 'information' || 
-        cleanedDate.toLowerCase() === 'prior' ||
-        cleanedDate.length < 8) {
+    if (cleanedDate.toLowerCase() === 'information' ||
+      cleanedDate.toLowerCase() === 'prior' ||
+      cleanedDate.length < 4) {
       return 0;
     }
-    
+
     let date: Date;
-    
+
+    // ✅ Handle Excel serial number dates (e.g., "26252" = days since 1899-12-30)
+    if (/^\d{4,5}$/.test(cleanedDate)) {
+      const serialNum = parseInt(cleanedDate);
+      // Excel epoch is Dec 30, 1899 (accounting for the Excel leap year bug)
+      const excelEpoch = new Date(1899, 11, 30); // Dec 30, 1899
+      date = new Date(excelEpoch.getTime() + serialNum * 86400000);
+    }
     // Handle format: "1995-11-22 00:00:00" or "1995-11-22"
-    if (cleanedDate.includes('-')) {
+    else if (cleanedDate.includes('-')) {
       // Split by space first to remove time part
       const datePart = cleanedDate.split(' ')[0];
       const parts = datePart.split('-');
-      
+
       if (parts.length === 3) {
         const year = parseInt(parts[0]);
         const month = parseInt(parts[1]) - 1; // Month is 0-indexed
@@ -46,7 +53,7 @@ function calculateAge(birthDate: string): number {
       } else {
         date = new Date(cleanedDate);
       }
-    } 
+    }
     // Handle format: "22/11/1995" or "DD/MM/YYYY"
     else if (cleanedDate.includes('/')) {
       const parts = cleanedDate.split('/');
@@ -58,30 +65,30 @@ function calculateAge(birthDate: string): number {
       } else {
         date = new Date(cleanedDate);
       }
-    } 
+    }
     else {
       date = new Date(cleanedDate);
     }
-    
+
     if (isNaN(date.getTime())) {
       return 0;
     }
-    
+
     const today = new Date();
     let age = today.getFullYear() - date.getFullYear();
     const monthDiff = today.getMonth() - date.getMonth();
-    
+
     if (monthDiff < 0 || (monthDiff === 0 && today.getDate() < date.getDate())) {
       age--;
     }
-    
+
     // Validate age range (18-100)
     if (age < 18 || age > 100) {
       return 0;
     }
-    
+
     return age;
-  } catch  {
+  } catch {
     return 0;
   }
 }
@@ -100,7 +107,7 @@ function getAgeRange(age: number): string {
 
 export async function GET(request: Request) {
   const startTime = Date.now();
-  
+
   try {
     const session = await getServerSession(authOptions);
     if (!session) {
@@ -136,7 +143,7 @@ export async function GET(request: Request) {
 
     console.time('Query-Age');
     console.log('WHERE condition:', JSON.stringify(whereCondition, null, 2));
-    
+
     // Fetch all possible columns that might contain birth date
     const birthDates = await prisma.employeeComponent.findMany({
       where: whereCondition,
@@ -149,10 +156,10 @@ export async function GET(request: Request) {
       },
       distinct: ['employeeNo'],
     });
-    
+
     console.timeEnd('Query-Age');
     console.log('Total birth date records fetched:', birthDates.length);
-    
+
     // Debug: Log first 3 records to see the data structure
     if (birthDates.length > 0) {
       console.log('Sample records:', JSON.stringify(birthDates.slice(0, 3), null, 2));
@@ -160,7 +167,7 @@ export async function GET(request: Request) {
 
     const ageRangeMap = new Map<string, number>();
     const ageRanges = ['< 25', '25-29', '30-34', '35-39', '40-44', '45-49', '50-54', '55-59', '60+'];
-    
+
     ageRanges.forEach(range => ageRangeMap.set(range, 0));
 
     let processedCount = 0;
@@ -169,7 +176,7 @@ export async function GET(request: Request) {
     birthDates.forEach(item => {
       // Try multiple columns in order of priority
       const dateFields = [item.nilai, item.remark, item.remark2, item.remark3];
-      
+
       let age = 0;
       for (const field of dateFields) {
         if (field && field.trim() !== '' && field.toLowerCase() !== 'information') {
@@ -179,7 +186,7 @@ export async function GET(request: Request) {
           }
         }
       }
-      
+
       if (age > 0) {
         const range = getAgeRange(age);
         ageRangeMap.set(range, (ageRangeMap.get(range) || 0) + 1);

@@ -127,16 +127,10 @@ model EmployeeComponent {
   uploadedAt  DateTime @default(now())
   user        User     @relation("EmployeeComponentUploads", fields: [uploadedBy], references: [id], onDelete: Cascade)
 
-  // ✅ Optimized indexes for 950K rows
+  // ✅ Optimized indexes (5 essential, removed redundant ones for disk savings)
   @@index([employeeNo])
-  @@index([bulanReport])
   @@index([uploadedBy])
-  @@index([type])
-  @@index([komponen])
-  // ✅ Composite indexes for common queries
-  @@index([employeeNo, komponen])
   @@index([bulanReport, type])
-  @@index([komponen, type])
   @@index([komponen, bulanReport, type])
   @@index([employeeNo, bulanReport])
   @@map("employee_components")

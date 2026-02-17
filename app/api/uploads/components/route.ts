@@ -10,7 +10,11 @@ import * as fs from "fs/promises";
 import * as path from "path";
 
 const MAX_FILE_SIZE = 500 * 1024 * 1024;
-const ROWS_PER_REQUEST = 10000;
+const ROWS_PER_CHUNK = 10000;
+
+function getUploadDir() {
+  return process.env.UPLOAD_DIR || './uploads';
+}
 
 export async function POST(request: NextRequest) {
   try {
@@ -21,12 +25,12 @@ export async function POST(request: NextRequest) {
 
     if (contentType.includes("multipart/form-data")) {
       // ========================================
-      // FILE UPLOAD (save to disk only, no processing)
+      // FILE UPLOAD (save to disk + pre-parse into chunks)
       // ========================================
       return await handleFileUpload(request, user);
     } else {
       // ========================================
-      // CHUNK PROCESSING (read saved file, process rows)
+      // CHUNK PROCESSING (read pre-parsed JSON chunk, process rows)
       // ========================================
       return await handleChunkProcessing(request, user);
     }
@@ -40,8 +44,8 @@ export async function POST(request: NextRequest) {
 }
 
 /**
- * Handle file upload — save file to disk, return file path.
- * Does NOT process the data (no DB inserts here).
+ * Handle file upload — save file to disk, pre-parse into JSON chunks.
+ * Returns totalRows and totalChunks so client knows exactly how many chunks to process.
  */
 async function handleFileUpload(request: NextRequest, user: any) {
   const formData = await request.formData();
@@ -61,53 +65,23 @@ async function handleFileUpload(request: NextRequest, user: any) {
   const arrayBuffer = await file.arrayBuffer();
   const buffer = Buffer.from(arrayBuffer);
 
-  // Save to disk
-  const uploadDir = process.env.UPLOAD_DIR || './uploads';
+  // Save original file to disk
+  const uploadDir = getUploadDir();
   await fs.mkdir(uploadDir, { recursive: true });
 
   const timestamp = Date.now();
   const sanitizedName = file.name.replace(/[^a-zA-Z0-9.-]/g, '_');
-  const fileName = `${type}_${timestamp}_${sanitizedName}`;
-  const filePath = path.join(uploadDir, fileName);
+  const baseName = `${type}_${timestamp}_${sanitizedName}`;
+  const filePath = path.join(uploadDir, baseName);
 
   await fs.writeFile(filePath, buffer);
+  console.log(`[Components] File saved: ${baseName}`);
 
-  console.log(`[Components] File saved: ${fileName}`);
-
-  return NextResponse.json({
-    success: true,
-    filePath: fileName,
-    fileName: file.name,
-    fileSize: file.size,
-    fileUrl: `/uploads/${fileName}`,
-  });
-}
-
-/**
- * Handle chunk processing — read saved file, process a chunk of rows into DB.
- */
-async function handleChunkProcessing(request: NextRequest, user: any) {
-  const body = await request.json();
-  const { fileUrl, filePath, fileName, fileSize, type, chunkIndex } = body;
-
-  if (!fileUrl || !filePath || !fileName || !type) {
-    return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
-  }
-
-  if (chunkIndex === undefined) {
-    return NextResponse.json({ error: "Missing chunkIndex" }, { status: 400 });
-  }
-
-  console.log(`[Components] Processing chunk ${chunkIndex + 1} of ${fileName}`);
-
-  // Read file from Railway Volume
-  const fullPath = path.join(process.env.UPLOAD_DIR || './uploads', filePath);
-  const buffer = await fs.readFile(fullPath);
-
+  // ✅ Parse file ONCE and split into JSON chunk files
+  console.time('[Components] Parse + Split');
   let allRows: any[] = [];
 
-  // ✅ Parse based on file type
-  if (fileName.endsWith(".csv")) {
+  if (file.name.endsWith(".csv")) {
     const content = buffer.toString("utf-8");
     const parseResult = parse(content, {
       header: true,
@@ -115,7 +89,7 @@ async function handleChunkProcessing(request: NextRequest, user: any) {
       transformHeader: (h: string) => h.trim(),
     });
     allRows = parseResult.data as any[];
-  } else if (fileName.endsWith(".xlsx") || fileName.endsWith(".xls")) {
+  } else if (file.name.endsWith(".xlsx") || file.name.endsWith(".xls")) {
     const workbook = XLSX.read(buffer, { type: "buffer" });
     const sheet = workbook.Sheets[workbook.SheetNames[0]];
     allRows = XLSX.utils.sheet_to_json(sheet);
@@ -123,10 +97,81 @@ async function handleChunkProcessing(request: NextRequest, user: any) {
     return NextResponse.json({ error: "Unsupported format" }, { status: 400 });
   }
 
-  // ✅ Get chunk rows
-  const startIdx = chunkIndex * ROWS_PER_REQUEST;
-  const endIdx = startIdx + ROWS_PER_REQUEST;
-  const chunkRows = allRows.slice(startIdx, endIdx);
+  const totalRows = allRows.length;
+  const totalChunks = Math.ceil(totalRows / ROWS_PER_CHUNK);
+
+  console.log(`[Components] Parsed ${totalRows} rows, splitting into ${totalChunks} chunks`);
+
+  // Create chunk directory
+  const chunkDir = path.join(uploadDir, `${baseName}_chunks`);
+  await fs.mkdir(chunkDir, { recursive: true });
+
+  // Write chunk files in parallel
+  const chunkWritePromises = [];
+  for (let i = 0; i < totalChunks; i++) {
+    const start = i * ROWS_PER_CHUNK;
+    const end = start + ROWS_PER_CHUNK;
+    const chunkData = allRows.slice(start, end);
+    const chunkPath = path.join(chunkDir, `chunk_${i}.json`);
+    chunkWritePromises.push(fs.writeFile(chunkPath, JSON.stringify(chunkData)));
+  }
+  await Promise.all(chunkWritePromises);
+
+  console.timeEnd('[Components] Parse + Split');
+  console.log(`[Components] ${totalChunks} chunk files written`);
+
+  // Free memory
+  allRows = [];
+
+  return NextResponse.json({
+    success: true,
+    filePath: baseName,
+    fileName: file.name,
+    fileSize: file.size,
+    fileUrl: `/uploads/${baseName}`,
+    totalRows,
+    totalChunks,
+  });
+}
+
+/**
+ * Handle chunk processing — read pre-parsed JSON chunk, process rows into DB.
+ * No more re-parsing the entire Excel file!
+ */
+async function handleChunkProcessing(request: NextRequest, user: any) {
+  const body = await request.json();
+  const { filePath, fileName, type, chunkIndex, totalChunks } = body;
+
+  if (!filePath || !fileName || !type) {
+    return NextResponse.json({ error: "Missing required fields" }, { status: 400 });
+  }
+
+  if (chunkIndex === undefined) {
+    return NextResponse.json({ error: "Missing chunkIndex" }, { status: 400 });
+  }
+
+  console.log(`[Components] Processing chunk ${chunkIndex + 1}/${totalChunks || '?'} of ${fileName}`);
+
+  const uploadDir = getUploadDir();
+  const chunkDir = path.join(uploadDir, `${filePath}_chunks`);
+  const chunkPath = path.join(chunkDir, `chunk_${chunkIndex}.json`);
+
+  // ✅ Read only the specific chunk file (fast! no Excel parsing)
+  let chunkRows: any[];
+  try {
+    const chunkData = await fs.readFile(chunkPath, 'utf-8');
+    chunkRows = JSON.parse(chunkData);
+  } catch {
+    // No more chunks to process
+    return NextResponse.json({
+      success: true,
+      chunkIndex,
+      inserted: 0,
+      processed: 0,
+      hasMore: false,
+      message: "No more chunks to process",
+    });
+  }
 
   // ✅ If no rows in this chunk, we're done
   if (chunkRows.length === 0) {
@@ -135,6 +180,7 @@ async function handleChunkProcessing(request: NextRequest, user: any) {
       chunkIndex,
       inserted: 0,
       processed: 0,
+      hasMore: false,
       message: "No more rows to process",
     });
   }
@@ -177,14 +223,32 @@ async function handleChunkProcessing(request: NextRequest, user: any) {
     }
   }
 
+  const hasMore = totalChunks ? chunkIndex < totalChunks - 1 : true;
   console.log(`[Components] Chunk ${chunkIndex + 1}: ${inserted}/${chunkRows.length} rows inserted`);
+
+  // ✅ Clean up chunk file after processing to save disk space
+  try {
+    await fs.unlink(chunkPath);
+  } catch {
+    // Ignore cleanup errors
+  }
+
+  // If this is the last chunk, clean up the chunk directory
+  if (!hasMore) {
+    try {
+      await fs.rm(path.join(uploadDir, `${filePath}_chunks`), { recursive: true, force: true });
+      console.log(`[Components] Cleaned up chunk directory`);
+    } catch {
+      // Ignore cleanup errors
+    }
+  }
 
   return NextResponse.json({
     success: true,
     chunkIndex,
     inserted,
     processed: chunkRows.length,
-    hasMore: endIdx < allRows.length,
+    hasMore,
   });
 }
 

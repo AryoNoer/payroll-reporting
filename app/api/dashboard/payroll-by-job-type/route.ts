@@ -14,12 +14,14 @@ function getJobTypeCacheKey(year: string | null, month: string | null): string {
 }
 
 function getMonthName(monthNum: string): string {
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
-                  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   return months[parseInt(monthNum) - 1];
 }
 
 export async function GET(request: Request) {
+  const startTime = Date.now();
+
   try {
     const session = await getServerSession(authOptions);
     if (!session) {
@@ -31,12 +33,22 @@ export async function GET(request: Request) {
     const month = searchParams.get('month');
     const directorate = searchParams.get('directorate');
 
-        // Check cache
+    // Check cache
     const cacheKey = getJobTypeCacheKey(year, month);
     const cached = jobTypeCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < JOB_TYPE_CACHE_DURATION) {
       console.log(`[Cache HIT] ${cacheKey}`);
-      return NextResponse.json(cached.data);
+      // Apply directorate filter to cached data if needed
+      if (directorate && directorate !== '(All)') {
+        return NextResponse.json({
+          data: cached.data.filteredByDirectorate?.[directorate] || [],
+          directorates: cached.data.directorates || [],
+        });
+      }
+      return NextResponse.json({
+        data: cached.data.allData || [],
+        directorates: cached.data.directorates || [],
+      });
     }
 
     const whereCondition: any = {};
@@ -54,97 +66,106 @@ export async function GET(request: Request) {
       whereCondition.bulanReport = { contains: `-${getMonthName(month)}-` };
     }
 
-    // Get unique employee numbers from the filtered period
-    const employeeNos = await prisma.employeeComponent.findMany({
-      where: whereCondition,
-      select: { employeeNo: true },
-      distinct: ['employeeNo']
-    });
-
-    const employeeNoList = employeeNos.map(e => e.employeeNo);
-
-    // Get Directorate for filtering
-    const directorates = await prisma.employeeComponent.findMany({
+    // ✅ OPTIMIZED: Single query instead of 4 separate queries
+    console.time('Query-JobType-Combined');
+    const allData = await prisma.employeeComponent.findMany({
       where: {
         ...whereCondition,
-        employeeNo: { in: employeeNoList },
-        komponen: 'Directorate',
+        OR: [
+          { komponen: 'Grade' },
+          { komponen: 'Net Salary' },
+          { komponen: 'Directorate' },
+        ],
       },
       select: {
         employeeNo: true,
+        komponen: true,
         nilai: true,
       },
     });
+    console.timeEnd('Query-JobType-Combined');
 
-    const directorateMap = new Map(directorates.map(d => [d.employeeNo, d.nilai]));
+    // ✅ Process in memory (much faster than multiple DB round-trips)
+    const gradeMap = new Map<string, string>();
+    const salaryMap = new Map<string, number>();
+    const directorateMap = new Map<string, string>();
 
-    // Filter employees by directorate if specified
-    let filteredEmployeeList = employeeNoList;
-    if (directorate && directorate !== '(All)') {
-      filteredEmployeeList = employeeNoList.filter(empNo => 
-        directorateMap.get(empNo) === directorate
-      );
-    }
-
-    // Get Grade (nilai field) for these employees
-    const grades = await prisma.employeeComponent.findMany({
-      where: {
-        ...whereCondition,
-        employeeNo: { in: filteredEmployeeList },
-        komponen: 'Grade',
-      },
-      select: {
-        employeeNo: true,
-        nilai: true, // Using nilai field for grade value
-      },
-    });
-
-    // Get Net Salary for these employees
-    const salaries = await prisma.employeeComponent.findMany({
-      where: {
-        ...whereCondition,
-        employeeNo: { in: filteredEmployeeList },
-        komponen: 'Net Salary',
-      },
-      select: {
-        employeeNo: true,
-        nilai: true,
-      },
-    });
-
-    // Create maps
-    const gradeMap = new Map(grades.map(g => [g.employeeNo, g.nilai || 'Unknown']));
-    const gradePayrollMap = new Map<string, number>();
-    
-    salaries.forEach(s => {
-      const grade = gradeMap.get(s.employeeNo) || 'Unknown';
-      const salary = parseFloat(s.nilai) || 0;
-      gradePayrollMap.set(grade, (gradePayrollMap.get(grade) || 0) + salary);
-    });
-
-    const result = Array.from(gradePayrollMap.entries()).map(([name, value]) => ({
-      name,
-      value: Math.round(value),
-    }));
-
-     // Cache result
-    jobTypeCache.set(cacheKey, { data: result, timestamp: Date.now() });
-    if (jobTypeCache.size > 100) {
-      const oldestKey = jobTypeCache.keys().next().value;
-      if (oldestKey) {
-        jobTypeCache.delete(oldestKey);
+    allData.forEach(item => {
+      if (item.komponen === 'Grade') {
+        gradeMap.set(item.employeeNo, item.nilai || 'Unknown');
+      } else if (item.komponen === 'Net Salary') {
+        salaryMap.set(item.employeeNo, parseFloat(item.nilai) || 0);
+      } else if (item.komponen === 'Directorate') {
+        directorateMap.set(item.employeeNo, item.nilai);
       }
-    }
+    });
 
-    result.sort((a, b) => b.value - a.value);
+    // Build grade payroll data for all directorates
+    const gradePayrollMap = new Map<string, number>();
+    const filteredByDirectorate: Record<string, { name: string; value: number }[]> = {};
 
-    // Get list of all directorates for filter dropdown
+    salaryMap.forEach((salary, employeeNo) => {
+      const grade = gradeMap.get(employeeNo) || 'Unknown';
+      const dept = directorateMap.get(employeeNo) || 'Unknown';
+
+      // Overall
+      gradePayrollMap.set(grade, (gradePayrollMap.get(grade) || 0) + salary);
+
+      // Per directorate
+      if (!filteredByDirectorate[dept]) {
+        filteredByDirectorate[dept] = [];
+      }
+    });
+
+    // Build per-directorate results for caching
+    const deptGradeMap = new Map<string, Map<string, number>>();
+    salaryMap.forEach((salary, employeeNo) => {
+      const grade = gradeMap.get(employeeNo) || 'Unknown';
+      const dept = directorateMap.get(employeeNo) || 'Unknown';
+
+      if (!deptGradeMap.has(dept)) {
+        deptGradeMap.set(dept, new Map());
+      }
+      const gradeMap2 = deptGradeMap.get(dept)!;
+      gradeMap2.set(grade, (gradeMap2.get(grade) || 0) + salary);
+    });
+
+    const deptResults: Record<string, { name: string; value: number }[]> = {};
+    deptGradeMap.forEach((grades, dept) => {
+      deptResults[dept] = Array.from(grades.entries())
+        .map(([name, value]) => ({ name, value: Math.round(value) }))
+        .sort((a, b) => b.value - a.value);
+    });
+
+    const allResult = Array.from(gradePayrollMap.entries())
+      .map(([name, value]) => ({ name, value: Math.round(value) }))
+      .sort((a, b) => b.value - a.value);
+
     const allDirectorates = [...new Set(Array.from(directorateMap.values()))]
       .filter(d => d && d.trim() !== '')
       .sort();
 
+    // Cache with per-directorate breakdowns
+    jobTypeCache.set(cacheKey, {
+      data: { allData: allResult, filteredByDirectorate: deptResults, directorates: allDirectorates },
+      timestamp: Date.now(),
+    });
+    if (jobTypeCache.size > 100) {
+      const oldestKey = jobTypeCache.keys().next().value;
+      if (oldestKey) jobTypeCache.delete(oldestKey);
+    }
+
+    // Return filtered result
+    let resultData = allResult;
+    if (directorate && directorate !== '(All)') {
+      resultData = deptResults[directorate] || [];
+    }
+
+    const duration = Date.now() - startTime;
+    console.log(`[JobType API] Completed in ${duration}ms`);
+
     return NextResponse.json({
-      data: result,
+      data: resultData,
       directorates: allDirectorates,
     });
 

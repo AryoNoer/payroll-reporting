@@ -155,7 +155,7 @@ export async function POST(request: NextRequest) {
     const buffer = Buffer.from(arrayBuffer);
 
     // Save file to storage
-    const uploadDir = process.env.UPLOAD_DIR || '/data/uploads';
+    const uploadDir = process.env.UPLOAD_DIR || './uploads';
     await mkdir(uploadDir, { recursive: true });
 
     const timestamp = Date.now();
@@ -355,7 +355,7 @@ async function processChunk(request: NextRequest) {
 
   try {
     // Read file from storage
-    const uploadDir = process.env.UPLOAD_DIR || '/data/uploads';
+    const uploadDir = process.env.UPLOAD_DIR || './uploads';
     const fullPath = join(uploadDir, filePath);
 
     if (!existsSync(fullPath)) {
@@ -470,7 +470,7 @@ async function processChunk(request: NextRequest) {
 
 async function getStorageFiles(type: string) {
   try {
-    const uploadDir = process.env.UPLOAD_DIR || '/data/uploads';
+    const uploadDir = process.env.UPLOAD_DIR || './uploads';
 
     if (!existsSync(uploadDir)) {
       return [];
@@ -512,7 +512,7 @@ async function processStorageFile(request: NextRequest) {
 
   try {
     // Read file from storage
-    const uploadDir = process.env.UPLOAD_DIR || '/data/uploads';
+    const uploadDir = process.env.UPLOAD_DIR || './uploads';
     const fullPath = join(uploadDir, filePath);
 
     if (!existsSync(fullPath)) {
@@ -655,7 +655,7 @@ export async function DELETE(request: NextRequest) {
     console.log("Deleting file:", filePath);
 
     // Delete file from storage
-    const uploadDir = process.env.UPLOAD_DIR || '/data/uploads';
+    const uploadDir = process.env.UPLOAD_DIR || './uploads';
     const fullPath = join(uploadDir, filePath);
 
     if (existsSync(fullPath)) {
