@@ -1,48 +1,20 @@
-// app/api/dashboard/average-net-salary/route.ts - OPTIMIZED VERSION
+// app/api/dashboard/average-net-salary/route.ts
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 
-// ============================================================================
-// CACHING LAYER
-// ============================================================================
 const cache = new Map<string, { data: any; timestamp: number }>();
-const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+const CACHE_DURATION = 5 * 60 * 1000;
 
 function getCacheKey(year: string | null, month: string | null): string {
   return `avg-salary-${year || 'all'}-${month || 'all'}`;
 }
 
-function getFromCache(key: string): any | null {
-  const cached = cache.get(key);
-  if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
-    console.log(`[Cache HIT] ${key}`);
-    return cached.data;
-  }
-  console.log(`[Cache MISS] ${key}`);
-  return null;
-}
-
-function setCache(key: string, data: any): void {
-  cache.set(key, { data, timestamp: Date.now() });
-  
-  // Clean old cache entries
-  if (cache.size > 100) {
-    const oldestKey = cache.keys().next().value;
-    if (oldestKey) {
-      cache.delete(oldestKey);
-    }
-  }
-}
-
-// ============================================================================
-// HELPER FUNCTIONS
-// ============================================================================
 function getMonthName(monthNum: string): string {
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
-                  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   return months[parseInt(monthNum) - 1];
 }
 
@@ -54,12 +26,50 @@ function getPreviousMonth(year: string, month: string): { year: string; month: s
   return { year, month: String(monthNum - 1).padStart(2, '0') };
 }
 
-// ============================================================================
-// MAIN API HANDLER
-// ============================================================================
+function buildWhereCondition(year: string | null, month: string | null): any {
+  const where: any = {};
+  if (year && year !== '(All)') {
+    if (month && month !== '(All)') {
+      where.AND = [
+        { bulanReport: { contains: `-${getMonthName(month)}-` } },
+        { bulanReport: { contains: year } }
+      ];
+    } else {
+      where.bulanReport = { contains: year };
+    }
+  } else if (month && month !== '(All)') {
+    where.bulanReport = { contains: `-${getMonthName(month)}-` };
+  }
+  return where;
+}
+
+function processRecords(records: any[]): { department: string; avgSalary: number }[] {
+  const deptSalaryMap = new Map<string, { total: number; count: number }>();
+
+  records.forEach(record => {
+    const d = record.data as any;
+    const dept = d['Directorate'] || 'Unknown';
+    const salary = parseFloat(d['Net Salary'] || '0') || 0;
+
+    if (salary <= 0) return;
+
+    if (!deptSalaryMap.has(dept)) {
+      deptSalaryMap.set(dept, { total: 0, count: 0 });
+    }
+    const current = deptSalaryMap.get(dept)!;
+    current.total += salary;
+    current.count += 1;
+  });
+
+  return Array.from(deptSalaryMap.entries()).map(([department, data]) => ({
+    department,
+    avgSalary: Math.round(data.total / data.count),
+  }));
+}
+
 export async function GET(request: Request) {
   const startTime = Date.now();
-  
+
   try {
     const session = await getServerSession(authOptions);
     if (!session) {
@@ -70,174 +80,70 @@ export async function GET(request: Request) {
     const year = searchParams.get('year');
     const month = searchParams.get('month');
 
-    // Check cache first
     const cacheKey = getCacheKey(year, month);
-    const cachedData = getFromCache(cacheKey);
-    if (cachedData) {
-      return NextResponse.json(cachedData);
+    const cached = cache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
+      return NextResponse.json(cached.data);
     }
 
-    // ========================================================================
-    // BUILD WHERE CONDITIONS
-    // ========================================================================
-    const whereConditionCurrent: any = {};
-    
-    if (year && year !== '(All)') {
-      if (month && month !== '(All)') {
-        whereConditionCurrent.AND = [
-          { bulanReport: { contains: `-${getMonthName(month)}-` } },
-          { bulanReport: { contains: year } }
-        ];
-      } else {
-        whereConditionCurrent.bulanReport = { contains: year };
-      }
-    } else if (month && month !== '(All)') {
-      whereConditionCurrent.bulanReport = { contains: `-${getMonthName(month)}-` };
-    }
+    // Current period
+    const whereCondition = buildWhereCondition(year, month);
 
-    // ========================================================================
-    // OPTIMIZED QUERY 1: Get Current Month Data (Net Salary + Directorate)
-    // Single query instead of two separate queries
-    // ========================================================================
-    console.time('Query-AvgSalary-Current');
-    
-    const currentData = await prisma.employeeComponent.findMany({
-      where: {
-        ...whereConditionCurrent,
-        OR: [
-          { komponen: 'Net Salary' },
-          { komponen: 'Directorate' }
-        ]
-      },
-      select: {
-        employeeNo: true,
-        komponen: true,
-        nilai: true,
-      },
+    console.time('Query-AvgSalary');
+    const currentRecords = await prisma.employeeComponent.findMany({
+      where: whereCondition,
+      select: { data: true },
     });
-    
-    console.timeEnd('Query-AvgSalary-Current');
+    console.timeEnd('Query-AvgSalary');
 
-    // ========================================================================
-    // PROCESS CURRENT MONTH DATA IN MEMORY
-    // ========================================================================
-    const salaryMap = new Map<string, number>();
-    const directorateMap = new Map<string, string>();
+    const currentResult = processRecords(currentRecords);
 
-    currentData.forEach(item => {
-      if (item.komponen === 'Net Salary') {
-        salaryMap.set(item.employeeNo, parseFloat(item.nilai) || 0);
-      } else if (item.komponen === 'Directorate') {
-        directorateMap.set(item.employeeNo, item.nilai);
-      }
-    });
-
-    // Calculate average salary by department
-    const deptSalaryMap = new Map<string, { total: number; count: number }>();
-    
-    salaryMap.forEach((salary, employeeNo) => {
-      const dept = directorateMap.get(employeeNo) || 'Unknown';
-      
-      if (!deptSalaryMap.has(dept)) {
-        deptSalaryMap.set(dept, { total: 0, count: 0 });
-      }
-      
-      const current = deptSalaryMap.get(dept)!;
-      current.total += salary;
-      current.count += 1;
-    });
-
-    const currentResult = Array.from(deptSalaryMap.entries()).map(([department, data]) => ({
-      department,
-      avgSalary: Math.round(data.total / data.count),
-    }));
-
-    // ========================================================================
-    // OPTIMIZED QUERY 2: Get Previous Month Data (if applicable)
-    // ========================================================================
+    // Previous period (if specific month selected)
     let previousResult: any[] = [];
-    
+
     if (year && year !== '(All)' && month && month !== '(All)') {
       const prev = getPreviousMonth(year, month);
-      
-      console.time('Query-AvgSalary-Previous');
-      
-      const whereConditionPrevious: any = {
-        AND: [
-          { bulanReport: { contains: `-${getMonthName(prev.month)}-` } },
-          { bulanReport: { contains: prev.year } }
-        ],
-        OR: [
-          { komponen: 'Net Salary' },
-          { komponen: 'Directorate' }
-        ]
-      };
+      const prevWhere = buildWhereCondition(prev.year, prev.month);
 
-      const previousData = await prisma.employeeComponent.findMany({
-        where: whereConditionPrevious,
-        select: {
-          employeeNo: true,
-          komponen: true,
-          nilai: true,
-        },
-      });
-      
-      console.timeEnd('Query-AvgSalary-Previous');
-
-      // Process previous month data
-      const prevSalaryMap = new Map<string, number>();
-      const prevDirMap = new Map<string, string>();
-
-      previousData.forEach(item => {
-        if (item.komponen === 'Net Salary') {
-          prevSalaryMap.set(item.employeeNo, parseFloat(item.nilai) || 0);
-        } else if (item.komponen === 'Directorate') {
-          prevDirMap.set(item.employeeNo, item.nilai);
-        }
+      const prevRecords = await prisma.employeeComponent.findMany({
+        where: prevWhere,
+        select: { data: true },
       });
 
-      // Use current directorateMap as fallback for employees without directorate in previous month
-      prevSalaryMap.forEach((salary, employeeNo) => {
-        if (!prevDirMap.has(employeeNo)) {
-          const currentDir = directorateMap.get(employeeNo);
-          if (currentDir) {
-            prevDirMap.set(employeeNo, currentDir);
-          }
-        }
-      });
-
-      const prevDeptSalaryMap = new Map<string, { total: number; count: number }>();
-      
-      prevSalaryMap.forEach((salary, employeeNo) => {
-        const dept = prevDirMap.get(employeeNo) || 'Unknown';
-        
-        if (!prevDeptSalaryMap.has(dept)) {
-          prevDeptSalaryMap.set(dept, { total: 0, count: 0 });
-        }
-        
-        const current = prevDeptSalaryMap.get(dept)!;
-        current.total += salary;
-        current.count += 1;
-      });
-
-      previousResult = Array.from(prevDeptSalaryMap.entries()).map(([department, data]) => ({
-        department,
-        avgSalary: Math.round(data.total / data.count),
-      }));
+      previousResult = processRecords(prevRecords);
     }
 
-    const result = {
-      current: currentResult,
+    // Add percentage change
+    const previousMap = new Map(previousResult.map(p => [p.department, p.avgSalary]));
+
+    const resultWithChange = currentResult.map(item => {
+      const prevAvg = previousMap.get(item.department) || 0;
+      const percentageChange = prevAvg > 0
+        ? Math.round(((item.avgSalary - prevAvg) / prevAvg) * 10000) / 100
+        : 0;
+
+      return {
+        ...item,
+        previousAvgSalary: prevAvg,
+        percentageChange,
+      };
+    });
+
+    const responseData = {
+      current: resultWithChange,
       previous: previousResult,
     };
 
-    // Store in cache
-    setCache(cacheKey, result);
+    cache.set(cacheKey, { data: responseData, timestamp: Date.now() });
+    if (cache.size > 100) {
+      const oldestKey = cache.keys().next().value;
+      if (oldestKey) cache.delete(oldestKey);
+    }
 
     const duration = Date.now() - startTime;
-    console.log(`[Avg Salary] Completed in ${duration}ms`);
+    console.log(`[AvgSalary API] Completed in ${duration}ms`);
 
-    return NextResponse.json(result);
+    return NextResponse.json(responseData);
 
   } catch (error) {
     console.error('Error fetching average net salary:', error);

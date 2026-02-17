@@ -1,60 +1,27 @@
+// app/api/dashboard/payroll-stats/route.ts
 /* eslint-disable @typescript-eslint/no-explicit-any */
-// API 1: Payroll Stats (Top Metrics) - OPTIMIZED VERSION
-// File: app/api/dashboard/payroll-stats/route.ts
-// ============================================================================
 import { NextResponse } from 'next/server';
 import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 
-// ============================================================================
-// CACHING LAYER
-// ============================================================================
-const cache = new Map<string, { data: any; timestamp: number }>();
-const CACHE_DURATION = 5 * 60 * 1000; // 5 minutes
+// Caching
+const statsCache = new Map<string, { data: any; timestamp: number }>();
+const STATS_CACHE_DURATION = 5 * 60 * 1000;
 
-function getCacheKey(year: string | null, month: string | null): string {
-  return `payroll-stats-${year || 'all'}-${month || 'all'}`;
+function getStatsCacheKey(year: string | null, month: string | null): string {
+  return `stats-${year || 'all'}-${month || 'all'}`;
 }
 
-function getFromCache(key: string): any | null {
-  const cached = cache.get(key);
-  if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
-    console.log(`[Cache HIT] ${key}`);
-    return cached.data;
-  }
-  console.log(`[Cache MISS] ${key}`);
-  return null;
-}
-
-function setCache(key: string, data: any): void {
-  cache.set(key, { data, timestamp: Date.now() });
-  
-  // Clean old cache entries (keep max 100 entries)
-  if (cache.size > 100) {
-    const oldestKey = cache.keys().next().value;
-    if (oldestKey) {
-      cache.delete(oldestKey);
-    }
-  } 
-  
-}
-
-// ============================================================================
-// HELPER FUNCTIONS
-// ============================================================================
 function getMonthName(monthNum: string): string {
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
-                  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   return months[parseInt(monthNum) - 1];
 }
 
-// ============================================================================
-// MAIN API HANDLER
-// ============================================================================
 export async function GET(request: Request) {
   const startTime = Date.now();
-  
+
   try {
     const session = await getServerSession(authOptions);
     if (!session) {
@@ -65,14 +32,12 @@ export async function GET(request: Request) {
     const year = searchParams.get('year');
     const month = searchParams.get('month');
 
-    // Check cache first
-    const cacheKey = getCacheKey(year, month);
-    const cachedData = getFromCache(cacheKey);
-    if (cachedData) {
-      return NextResponse.json(cachedData);
+    const cacheKey = getStatsCacheKey(year, month);
+    const cached = statsCache.get(cacheKey);
+    if (cached && Date.now() - cached.timestamp < STATS_CACHE_DURATION) {
+      return NextResponse.json(cached.data);
     }
 
-    // Build where condition
     const whereCondition: any = {};
 
     if (year && year !== '(All)') {
@@ -88,73 +53,45 @@ export async function GET(request: Request) {
       whereCondition.bulanReport = { contains: `-${getMonthName(month)}-` };
     }
 
-    // ========================================================================
-    // OPTIMIZED QUERY: Single query to get all needed data
-    // ========================================================================
-    console.time('Query-PayrollStats-All');
-    
-    const allData = await prisma.employeeComponent.findMany({
-      where: {
-        ...whereCondition,
-        OR: [
-          { komponen: 'Directorate' },
-          { komponen: 'Total Allowance' },
-          { komponen: 'Tax Allowance' },
-          { komponen: 'Net Salary' }
-        ]
-      },
-      select: {
-        employeeNo: true,
-        komponen: true,
-        nilai: true,
-      },
-    });
-    
-    console.timeEnd('Query-PayrollStats-All');
+    console.time('Query-PayrollStats');
 
-    // ========================================================================
-    // PROCESS DATA IN MEMORY (Much faster than multiple DB queries)
-    // ========================================================================
-    const uniqueEmployees = new Set<string>();
-    const uniqueDepartments = new Set<string>();
-    let totalPayroll = 0;
-    const salaryValues: number[] = [];
-
-    allData.forEach(item => {
-      uniqueEmployees.add(item.employeeNo);
-      
-      if (item.komponen === 'Directorate') {
-        uniqueDepartments.add(item.nilai);
-      } 
-      else if (['Total Allowance', 'Tax Allowance', 'Net Salary'].includes(item.komponen)) {
-        const value = parseFloat(item.nilai) || 0;
-        totalPayroll += value;
-      }
-      
-      if (item.komponen === 'Net Salary') {
-        const value = parseFloat(item.nilai) || 0;
-        if (value > 0) {
-          salaryValues.push(value);
-        }
-      }
+    // ✅ Single query — all data is in JSON `data` column
+    const records = await prisma.employeeComponent.findMany({
+      where: whereCondition,
+      select: { data: true },
     });
 
-    const maxSalary = salaryValues.length > 0 ? Math.max(...salaryValues) : 0;
-    const minSalary = salaryValues.length > 0 ? Math.min(...salaryValues) : 0;
+    console.timeEnd('Query-PayrollStats');
+
+    // Process in memory
+    let totalEmployees = records.length;
+    let totalNetSalary = 0;
+    let totalAllowance = 0;
+    let totalTaxAllowance = 0;
+
+    records.forEach(record => {
+      const d = record.data as any;
+      totalNetSalary += parseFloat(d['Net Salary'] || '0') || 0;
+      totalAllowance += parseFloat(d['Total Allowance'] || '0') || 0;
+      totalTaxAllowance += parseFloat(d['Tax Allowance'] || '0') || 0;
+    });
 
     const result = {
-      payrollEmployees: uniqueEmployees.size,
-      payrollDepartments: uniqueDepartments.size,
-      payrollAmount: Math.round(totalPayroll),
-      maxSalary: Math.round(maxSalary),
-      minSalary: Math.round(minSalary)
+      totalEmployees,
+      totalNetSalary: Math.round(totalNetSalary),
+      totalAllowance: Math.round(totalAllowance),
+      totalTaxAllowance: Math.round(totalTaxAllowance),
+      averageNetSalary: totalEmployees > 0 ? Math.round(totalNetSalary / totalEmployees) : 0,
     };
 
-    // Store in cache
-    setCache(cacheKey, result);
+    statsCache.set(cacheKey, { data: result, timestamp: Date.now() });
+    if (statsCache.size > 100) {
+      const oldestKey = statsCache.keys().next().value;
+      if (oldestKey) statsCache.delete(oldestKey);
+    }
 
     const duration = Date.now() - startTime;
-    console.log(`[Payroll Stats] Completed in ${duration}ms`);
+    console.log(`[PayrollStats API] ${totalEmployees} employees in ${duration}ms`);
 
     return NextResponse.json(result);
 

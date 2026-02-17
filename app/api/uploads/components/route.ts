@@ -10,7 +10,7 @@ import * as fs from "fs/promises";
 import * as path from "path";
 
 const MAX_FILE_SIZE = 500 * 1024 * 1024;
-const ROWS_PER_CHUNK = 10000;
+const EMPLOYEES_PER_CHUNK = 2000; // Grouped employees per chunk (not raw rows)
 
 function getUploadDir() {
   return process.env.UPLOAD_DIR || './uploads';
@@ -20,18 +20,11 @@ export async function POST(request: NextRequest) {
   try {
     const user = await requireAuth();
 
-    // ✅ Check content type to determine if this is a file upload or chunk processing
     const contentType = request.headers.get("content-type") || "";
 
     if (contentType.includes("multipart/form-data")) {
-      // ========================================
-      // FILE UPLOAD (save to disk + pre-parse into chunks)
-      // ========================================
       return await handleFileUpload(request, user);
     } else {
-      // ========================================
-      // CHUNK PROCESSING (read pre-parsed JSON chunk, process rows)
-      // ========================================
       return await handleChunkProcessing(request, user);
     }
   } catch (error) {
@@ -44,8 +37,8 @@ export async function POST(request: NextRequest) {
 }
 
 /**
- * Handle file upload — save file to disk, pre-parse into JSON chunks.
- * Returns totalRows and totalChunks so client knows exactly how many chunks to process.
+ * Handle file upload — save file, parse, GROUP BY employeeNo, split into chunks.
+ * Each employee becomes 1 row with all komponen as JSON instead of 24 separate rows.
  */
 async function handleFileUpload(request: NextRequest, user: any) {
   const formData = await request.formData();
@@ -77,8 +70,8 @@ async function handleFileUpload(request: NextRequest, user: any) {
   await fs.writeFile(filePath, buffer);
   console.log(`[Components] File saved: ${baseName}`);
 
-  // ✅ Parse file ONCE and split into JSON chunk files
-  console.time('[Components] Parse + Split');
+  // ✅ Parse file ONCE
+  console.time('[Components] Parse + Group');
   let allRows: any[] = [];
 
   if (file.name.endsWith(".csv")) {
@@ -97,28 +90,62 @@ async function handleFileUpload(request: NextRequest, user: any) {
     return NextResponse.json({ error: "Unsupported format" }, { status: 400 });
   }
 
-  const totalRows = allRows.length;
-  const totalChunks = Math.ceil(totalRows / ROWS_PER_CHUNK);
+  const totalRawRows = allRows.length;
+  console.log(`[Components] Parsed ${totalRawRows} raw rows`);
 
-  console.log(`[Components] Parsed ${totalRows} rows, splitting into ${totalChunks} chunks`);
+  // ✅ GROUP BY employeeNo — merge all komponen into JSON per employee
+  const employeeMap = new Map<string, { bulanReport: string; data: Record<string, any> }>();
 
-  // Create chunk directory
+  allRows.forEach(row => {
+    const employeeNo = String(row["Employee No"] || "").trim();
+    const komponen = String(row["Komponen"] || "").trim();
+    const nilai = String(row["Nilai"] || "").trim();
+    const bulanReport = String(row["Bulan Report"] || "").trim();
+
+    if (!employeeNo || !komponen || !bulanReport) return;
+
+    const key = `${employeeNo}__${bulanReport}`;
+
+    if (!employeeMap.has(key)) {
+      employeeMap.set(key, { bulanReport, data: {} });
+    }
+
+    const entry = employeeMap.get(key)!;
+    entry.data[komponen] = nilai;
+
+    // Also store remark fields if present
+    if (row["Remark"]) entry.data[`${komponen}_remark`] = String(row["Remark"]).trim();
+    if (row["Remark2"]) entry.data[`${komponen}_remark2`] = String(row["Remark2"]).trim();
+    if (row["Remark3"]) entry.data[`${komponen}_remark3`] = String(row["Remark3"]).trim();
+  });
+
+  // Convert Map to array of grouped employees
+  const groupedEmployees = Array.from(employeeMap.entries()).map(([key, value]) => ({
+    employeeNo: key.split('__')[0],
+    bulanReport: value.bulanReport,
+    data: value.data,
+  }));
+
+  const totalEmployees = groupedEmployees.length;
+  const totalChunks = Math.ceil(totalEmployees / EMPLOYEES_PER_CHUNK);
+
+  console.log(`[Components] ${totalRawRows} rows → ${totalEmployees} employees (${totalChunks} chunks)`);
+
+  // Write chunk files
   const chunkDir = path.join(uploadDir, `${baseName}_chunks`);
   await fs.mkdir(chunkDir, { recursive: true });
 
-  // Write chunk files in parallel
   const chunkWritePromises = [];
   for (let i = 0; i < totalChunks; i++) {
-    const start = i * ROWS_PER_CHUNK;
-    const end = start + ROWS_PER_CHUNK;
-    const chunkData = allRows.slice(start, end);
+    const start = i * EMPLOYEES_PER_CHUNK;
+    const end = start + EMPLOYEES_PER_CHUNK;
+    const chunkData = groupedEmployees.slice(start, end);
     const chunkPath = path.join(chunkDir, `chunk_${i}.json`);
     chunkWritePromises.push(fs.writeFile(chunkPath, JSON.stringify(chunkData)));
   }
   await Promise.all(chunkWritePromises);
 
-  console.timeEnd('[Components] Parse + Split');
-  console.log(`[Components] ${totalChunks} chunk files written`);
+  console.timeEnd('[Components] Parse + Group');
 
   // Free memory
   allRows = [];
@@ -129,14 +156,14 @@ async function handleFileUpload(request: NextRequest, user: any) {
     fileName: file.name,
     fileSize: file.size,
     fileUrl: `/uploads/${baseName}`,
-    totalRows,
+    totalRows: totalRawRows,
+    totalEmployees,
     totalChunks,
   });
 }
 
 /**
- * Handle chunk processing — read pre-parsed JSON chunk, process rows into DB.
- * No more re-parsing the entire Excel file!
+ * Handle chunk processing — read pre-grouped JSON chunk, upsert into DB.
  */
 async function handleChunkProcessing(request: NextRequest, user: any) {
   const body = await request.json();
@@ -156,13 +183,12 @@ async function handleChunkProcessing(request: NextRequest, user: any) {
   const chunkDir = path.join(uploadDir, `${filePath}_chunks`);
   const chunkPath = path.join(chunkDir, `chunk_${chunkIndex}.json`);
 
-  // ✅ Read only the specific chunk file (fast! no Excel parsing)
-  let chunkRows: any[];
+  // Read pre-grouped chunk
+  let chunkEmployees: { employeeNo: string; bulanReport: string; data: Record<string, any> }[];
   try {
     const chunkData = await fs.readFile(chunkPath, 'utf-8');
-    chunkRows = JSON.parse(chunkData);
+    chunkEmployees = JSON.parse(chunkData);
   } catch {
-    // No more chunks to process
     return NextResponse.json({
       success: true,
       chunkIndex,
@@ -173,81 +199,73 @@ async function handleChunkProcessing(request: NextRequest, user: any) {
     });
   }
 
-  // ✅ If no rows in this chunk, we're done
-  if (chunkRows.length === 0) {
+  if (chunkEmployees.length === 0) {
     return NextResponse.json({
       success: true,
       chunkIndex,
       inserted: 0,
       processed: 0,
       hasMore: false,
-      message: "No more rows to process",
     });
   }
 
-  // ✅ Process chunk
-  const componentsData = chunkRows
-    .filter(row => {
-      const employeeNo = String(row["Employee No"] || "").trim();
-      const komponen = String(row["Komponen"] || "").trim();
-      const bulanReport = String(row["Bulan Report"] || "").trim();
-      return employeeNo && komponen && bulanReport;
-    })
-    .map(row => ({
-      employeeNo: String(row["Employee No"]).trim(),
-      komponen: String(row["Komponen"]).trim(),
-      nilai: String(row["Nilai"] || "").trim(),
-      remark: row["Remark"] ? String(row["Remark"]).trim() : null,
-      remark2: row["Remark2"] ? String(row["Remark2"]).trim() : null,
-      remark3: row["Remark3"] ? String(row["Remark3"]).trim() : null,
-      bulanReport: String(row["Bulan Report"]).trim(),
-      type,
-      uploadedBy: user.id,
-    }));
-
-  // ✅ Insert in smaller batches
+  // ✅ Upsert each employee (1 row per employee per period per type)
   let inserted = 0;
-  const batchSize = 2000;
+  const batchSize = 500;
 
-  for (let i = 0; i < componentsData.length; i += batchSize) {
-    const batch = componentsData.slice(i, i + batchSize);
+  for (let i = 0; i < chunkEmployees.length; i += batchSize) {
+    const batch = chunkEmployees.slice(i, i + batchSize);
+
+    // Use a transaction for each batch
     try {
-      const result = await prisma.employeeComponent.createMany({
-        data: batch,
-        skipDuplicates: true,
-      });
-      inserted += result.count;
-      await new Promise(resolve => setTimeout(resolve, 50));
+      await prisma.$transaction(
+        batch.map(emp =>
+          prisma.employeeComponent.upsert({
+            where: {
+              employeeNo_bulanReport_type: {
+                employeeNo: emp.employeeNo,
+                bulanReport: emp.bulanReport,
+                type,
+              },
+            },
+            update: {
+              data: emp.data,
+              uploadedBy: user.id,
+            },
+            create: {
+              employeeNo: emp.employeeNo,
+              bulanReport: emp.bulanReport,
+              type,
+              data: emp.data,
+              uploadedBy: user.id,
+            },
+          })
+        )
+      );
+      inserted += batch.length;
     } catch (error) {
-      console.error(`Batch insert failed:`, error);
+      console.error(`Batch upsert failed:`, error);
     }
   }
 
   const hasMore = totalChunks ? chunkIndex < totalChunks - 1 : true;
-  console.log(`[Components] Chunk ${chunkIndex + 1}: ${inserted}/${chunkRows.length} rows inserted`);
+  console.log(`[Components] Chunk ${chunkIndex + 1}: ${inserted}/${chunkEmployees.length} employees upserted`);
 
-  // ✅ Clean up chunk file after processing to save disk space
-  try {
-    await fs.unlink(chunkPath);
-  } catch {
-    // Ignore cleanup errors
-  }
+  // Clean up chunk file
+  try { await fs.unlink(chunkPath); } catch { /* ignore */ }
 
-  // If this is the last chunk, clean up the chunk directory
   if (!hasMore) {
     try {
       await fs.rm(path.join(uploadDir, `${filePath}_chunks`), { recursive: true, force: true });
       console.log(`[Components] Cleaned up chunk directory`);
-    } catch {
-      // Ignore cleanup errors
-    }
+    } catch { /* ignore */ }
   }
 
   return NextResponse.json({
     success: true,
     chunkIndex,
     inserted,
-    processed: chunkRows.length,
+    processed: chunkEmployees.length,
     hasMore,
   });
 }

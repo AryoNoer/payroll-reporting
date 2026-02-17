@@ -1,6 +1,6 @@
 // ============================================
-// FILE 1: app/api/uploads/process-storage/route.ts
-// API untuk process file yang sudah ada di storage
+// app/api/uploads/process-storage/route.ts
+// Process files already on storage  
 // ============================================
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
@@ -12,7 +12,7 @@ import * as XLSX from "xlsx";
 import * as fs from "fs/promises";
 import * as path from "path";
 
-const ROWS_PER_CHUNK = 10000;
+const EMPLOYEES_PER_CHUNK = 2000;
 
 export async function POST(request: NextRequest) {
   try {
@@ -29,9 +29,8 @@ export async function POST(request: NextRequest) {
 
     console.log(`[Process Storage] File: ${filePath}, Chunk: ${chunkIndex}`);
 
-  
-    const fullPath = path.join(process.env.UPLOAD_DIR || '/data/uploads', filePath);
-    const buffer = await fs.readFile(fullPath); 
+    const fullPath = path.join(process.env.UPLOAD_DIR || './uploads', filePath);
+    const buffer = await fs.readFile(fullPath);
 
     // Parse file
     let allRows: any[] = [];
@@ -55,12 +54,40 @@ export async function POST(request: NextRequest) {
       );
     }
 
-    // Get chunk
-    const startIdx = chunkIndex * ROWS_PER_CHUNK;
-    const endIdx = startIdx + ROWS_PER_CHUNK;
-    const chunkRows = allRows.slice(startIdx, endIdx);
+    // ✅ Group by employeeNo — merge all komponen into JSON
+    const employeeMap = new Map<string, { bulanReport: string; data: Record<string, any> }>();
 
-    if (chunkRows.length === 0) {
+    allRows.forEach(row => {
+      const employeeNo = String(row["Employee No"] || "").trim();
+      const komponen = String(row["Komponen"] || "").trim();
+      const nilai = String(row["Nilai"] || "").trim();
+      const bulanReport = String(row["Bulan Report"] || "").trim();
+
+      if (!employeeNo || !komponen || !bulanReport) return;
+
+      const key = `${employeeNo}__${bulanReport}`;
+
+      if (!employeeMap.has(key)) {
+        employeeMap.set(key, { bulanReport, data: {} });
+      }
+
+      const entry = employeeMap.get(key)!;
+      entry.data[komponen] = nilai;
+      if (row["Remark"]) entry.data[`${komponen}_remark`] = String(row["Remark"]).trim();
+    });
+
+    const groupedEmployees = Array.from(employeeMap.entries()).map(([key, value]) => ({
+      employeeNo: key.split('__')[0],
+      bulanReport: value.bulanReport,
+      data: value.data,
+    }));
+
+    // Get chunk
+    const startIdx = chunkIndex * EMPLOYEES_PER_CHUNK;
+    const endIdx = startIdx + EMPLOYEES_PER_CHUNK;
+    const chunkEmployees = groupedEmployees.slice(startIdx, endIdx);
+
+    if (chunkEmployees.length === 0) {
       return NextResponse.json({
         success: true,
         chunkIndex,
@@ -71,55 +98,51 @@ export async function POST(request: NextRequest) {
       });
     }
 
-    // Process chunk
-    const componentsData = chunkRows
-      .filter(row => {
-        const employeeNo = String(row["Employee No"] || "").trim();
-        const komponen = String(row["Komponen"] || "").trim();
-        const bulanReport = String(row["Bulan Report"] || "").trim();
-        return employeeNo && komponen && bulanReport;
-      })
-      .map(row => ({
-        employeeNo: String(row["Employee No"]).trim(),
-        komponen: String(row["Komponen"]).trim(),
-        nilai: String(row["Nilai"] || "").trim(),
-        remark: row["Remark"] ? String(row["Remark"]).trim() : null,
-        remark2: row["Remark2"] ? String(row["Remark2"]).trim() : null,
-        remark3: row["Remark3"] ? String(row["Remark3"]).trim() : null,
-        bulanReport: String(row["Bulan Report"]).trim(),
-        type,
-        uploadedBy: user.id,
-      }));
-
-    // Insert in batches
+    // ✅ Upsert grouped employees
     let inserted = 0;
-    const batchSize = 2000;
+    const batchSize = 500;
 
-    for (let i = 0; i < componentsData.length; i += batchSize) {
-      const batch = componentsData.slice(i, i + batchSize);
+    for (let i = 0; i < chunkEmployees.length; i += batchSize) {
+      const batch = chunkEmployees.slice(i, i + batchSize);
       try {
-        const result = await prisma.employeeComponent.createMany({
-          data: batch,
-          skipDuplicates: true,
-        });
-        inserted += result.count;
-        await new Promise(resolve => setTimeout(resolve, 50));
+        await prisma.$transaction(
+          batch.map(emp =>
+            prisma.employeeComponent.upsert({
+              where: {
+                employeeNo_bulanReport_type: {
+                  employeeNo: emp.employeeNo,
+                  bulanReport: emp.bulanReport,
+                  type,
+                },
+              },
+              update: { data: emp.data, uploadedBy: user.id },
+              create: {
+                employeeNo: emp.employeeNo,
+                bulanReport: emp.bulanReport,
+                type,
+                data: emp.data,
+                uploadedBy: user.id,
+              },
+            })
+          )
+        );
+        inserted += batch.length;
       } catch (error) {
-        console.error(`Batch insert failed:`, error);
+        console.error(`Batch upsert failed:`, error);
       }
     }
 
     console.log(
-      `[Process Storage] Chunk ${chunkIndex + 1}: ${inserted}/${chunkRows.length} inserted`
+      `[Process Storage] Chunk ${chunkIndex + 1}: ${inserted}/${chunkEmployees.length} employees upserted`
     );
 
     return NextResponse.json({
       success: true,
       chunkIndex,
       inserted,
-      processed: chunkRows.length,
-      hasMore: endIdx < allRows.length,
-      totalRows: allRows.length,
+      processed: chunkEmployees.length,
+      hasMore: endIdx < groupedEmployees.length,
+      totalEmployees: groupedEmployees.length,
     });
   } catch (error) {
     console.error("[Process Storage] Error:", error);
@@ -129,13 +152,14 @@ export async function POST(request: NextRequest) {
     );
   }
 }
+
 export async function GET(_request: NextRequest) {
   try {
     await requireAuth();
-    
-    const uploadDir = process.env.UPLOAD_DIR || '/data/uploads';
+
+    const uploadDir = process.env.UPLOAD_DIR || './uploads';
     const files = await fs.readdir(uploadDir);
-    
+
     return NextResponse.json({
       success: true,
       files: files.filter((f: string) => f.endsWith('.csv') || f.endsWith('.xlsx') || f.endsWith('.xls'))

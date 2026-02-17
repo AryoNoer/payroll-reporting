@@ -5,17 +5,16 @@ import { getServerSession } from 'next-auth';
 import { authOptions } from '@/lib/auth';
 import { prisma } from '@/lib/prisma';
 
-// Caching
 const elementsCache = new Map<string, { data: any; timestamp: number }>();
-const ELEMENTS_CACHE_DURATION = 10 * 60 * 1000; // 10 minutes
+const ELEMENTS_CACHE_DURATION = 10 * 60 * 1000;
 
 function getElementsCacheKey(year: string | null, month: string | null): string {
   return `elements-${year || 'all'}-${month || 'all'}`;
 }
 
 function getMonthName(monthNum: string): string {
-  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
-                  'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+  const months = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+    'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
   return months[parseInt(monthNum) - 1];
 }
 
@@ -25,6 +24,55 @@ function getPreviousMonth(year: string, month: string): { year: string; month: s
     return { year: String(parseInt(year) - 1), month: '12' };
   }
   return { year, month: String(monthNum - 1).padStart(2, '0') };
+}
+
+function buildWhereCondition(year: string | null, month: string | null): any {
+  const where: any = {};
+  if (year && year !== '(All)') {
+    if (month && month !== '(All)') {
+      where.AND = [
+        { bulanReport: { contains: `-${getMonthName(month)}-` } },
+        { bulanReport: { contains: year } }
+      ];
+    } else {
+      where.bulanReport = { contains: year };
+    }
+  } else if (month && month !== '(All)') {
+    where.bulanReport = { contains: `-${getMonthName(month)}-` };
+  }
+  return where;
+}
+
+// Non-monetary/metadata fields to exclude from payroll elements
+const excludedFields = new Set([
+  'Name', 'Directorate', 'Grade', 'Birth Date', 'Length of Service',
+  'Length Of Service', 'Gender', 'Employee No', 'Position', 'Org Unit',
+  'Tax Status', 'Tax File No', 'No KTP', 'Employment Status',
+  'Join Date', 'Terminate Date', 'Net Salary', 'Gross Salary', 'Basic Salary',
+]);
+
+// Fields that end with _remark, _remark2, _remark3 are also excluded
+function isRemarkField(key: string): boolean {
+  return key.endsWith('_remark') || key.endsWith('_remark2') || key.endsWith('_remark3');
+}
+
+function extractElements(records: any[]): Map<string, number> {
+  const elementMap = new Map<string, number>();
+
+  records.forEach(record => {
+    const d = record.data as any;
+
+    Object.entries(d).forEach(([key, val]) => {
+      if (excludedFields.has(key) || isRemarkField(key)) return;
+
+      const value = parseFloat(val as string) || 0;
+      if (value > 0) {
+        elementMap.set(key, (elementMap.get(key) || 0) + value);
+      }
+    });
+  });
+
+  return elementMap;
 }
 
 export async function GET(request: Request) {
@@ -38,134 +86,77 @@ export async function GET(request: Request) {
     const year = searchParams.get('year');
     const month = searchParams.get('month');
 
-    // Check cache
     const cacheKey = getElementsCacheKey(year, month);
     const cached = elementsCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < ELEMENTS_CACHE_DURATION) {
-      console.log(`[Cache HIT] ${cacheKey}`);
       return NextResponse.json(cached.data);
     }
 
-    // Build where condition for current month
-    const whereConditionCurrent: any = {};
+    // Current period
+    const whereCondition = buildWhereCondition(year, month);
 
-    if (year && year !== '(All)') {
-      if (month && month !== '(All)') {
-        whereConditionCurrent.AND = [
-          { bulanReport: { contains: `-${getMonthName(month)}-` } },
-          { bulanReport: { contains: year } }
-        ];
-      } else {
-        whereConditionCurrent.bulanReport = { contains: year };
-      }
-    } else if (month && month !== '(All)') {
-      whereConditionCurrent.bulanReport = { contains: `-${getMonthName(month)}-` };
-    }
-
-    // Get all allowance components (remark = 'Allowance')
-    const excludedComponents = ['Net Salary', 'Gross Salary', 'Basic Salary', 'Name', 'Directorate', 'Grade', 'Birth Date', 'Length Of Service'];
-    
-    const currentComponents = await prisma.employeeComponent.findMany({
-      where: {
-        ...whereConditionCurrent,
-        komponen: { notIn: excludedComponents },
-        remark: 'Allowance', // Only get Allowance items
-      },
-      select: {
-        komponen: true,
-        nilai: true,
-      },
+    const currentRecords = await prisma.employeeComponent.findMany({
+      where: whereCondition,
+      select: { data: true },
     });
 
-    // Aggregate by component
-    const elementMap = new Map<string, number>();
-    
-    currentComponents.forEach(c => {
-      const value = parseFloat(c.nilai) || 0;
-      elementMap.set(c.komponen, (elementMap.get(c.komponen) || 0) + value);
-    });
+    const currentElements = extractElements(currentRecords);
 
-    // Convert to array and sort by value (descending)
-    let currentResult = Array.from(elementMap.entries())
+    let currentResult = Array.from(currentElements.entries())
       .map(([name, value]) => ({ name, value: Math.round(value) }))
       .sort((a, b) => b.value - a.value)
-      .slice(0, 10); // Top 10
+      .slice(0, 10);
 
-    // Get previous month data if specific month is selected
-    const previousValueMap = new Map<string, number>();
+    // Previous period
     let previousResult: any[] = [];
-    
+    const previousElements = new Map<string, number>();
+
     if (year && year !== '(All)' && month && month !== '(All)') {
       const prev = getPreviousMonth(year, month);
-      
-      const whereConditionPrevious: any = {
-        AND: [
-          { bulanReport: { contains: `-${getMonthName(prev.month)}-` } },
-          { bulanReport: { contains: prev.year } }
-        ],
-        komponen: { notIn: excludedComponents },
-        remark: 'Allowance', // Only get Allowance items
-      };
+      const prevWhere = buildWhereCondition(prev.year, prev.month);
 
-      const previousComponents = await prisma.employeeComponent.findMany({
-        where: whereConditionPrevious,
-        select: {
-          komponen: true,
-          nilai: true,
-        },
+      const prevRecords = await prisma.employeeComponent.findMany({
+        where: prevWhere,
+        select: { data: true },
       });
 
-      previousComponents.forEach(c => {
-        const value = parseFloat(c.nilai) || 0;
-        previousValueMap.set(c.komponen, (previousValueMap.get(c.komponen) || 0) + value);
-      });
+      const prevElements = extractElements(prevRecords);
+      prevElements.forEach((v, k) => previousElements.set(k, v));
 
-      previousResult = Array.from(previousValueMap.entries())
+      previousResult = Array.from(prevElements.entries())
         .map(([name, value]) => ({ name, value: Math.round(value) }))
         .sort((a, b) => b.value - a.value)
         .slice(0, 10);
     }
 
-    // Add previous values and calculate percentage change to current result
+    // Add percentage change
     currentResult = currentResult.map(item => {
-      const previousValue = Math.round(previousValueMap.get(item.name) || 0);
-      let percentageChange = 0;
-      
-      if (previousValue > 0) {
-        percentageChange = ((item.value - previousValue) / previousValue) * 100;
-      }
-      
-      
-      return {
-        ...item,
-        previousValue,
-        percentageChange: Math.round(percentageChange * 100) / 100, // Round to 2 decimal places
-      };
+      const previousValue = Math.round(previousElements.get(item.name) || 0);
+      const percentageChange = previousValue > 0
+        ? Math.round(((item.value - previousValue) / previousValue) * 10000) / 100
+        : 0;
+
+      return { ...item, previousValue, percentageChange };
     });
 
-
-
-    // Add percentage change to previous result (comparing with current)
     previousResult = previousResult.map(item => {
       const currentValue = currentResult.find(c => c.name === item.name)?.value || 0;
-      let percentageChange = 0;
-      
-      if (item.value > 0 && currentValue > 0) {
-        percentageChange = ((currentValue - item.value) / item.value) * 100;
-      }
-      
-      return {
-        ...item,
-        currentValue,
-        percentageChange: Math.round(percentageChange * 100) / 100,
-      };
+      const percentageChange = item.value > 0 && currentValue > 0
+        ? Math.round(((currentValue - item.value) / item.value) * 10000) / 100
+        : 0;
+
+      return { ...item, currentValue, percentageChange };
     });
 
-    return NextResponse.json({
-      current: currentResult,
-      previous: previousResult,
-    });
+    const responseData = { current: currentResult, previous: previousResult };
 
+    elementsCache.set(cacheKey, { data: responseData, timestamp: Date.now() });
+    if (elementsCache.size > 100) {
+      const oldestKey = elementsCache.keys().next().value;
+      if (oldestKey) elementsCache.delete(oldestKey);
+    }
+
+    return NextResponse.json(responseData);
 
   } catch (error) {
     console.error('Error fetching payroll elements:', error);

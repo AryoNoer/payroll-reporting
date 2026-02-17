@@ -1,11 +1,9 @@
-// FILE 1: app/api/dashboard/net-salary-trend/route.ts - OPTIMIZED
-// ============================================================================
+// app/api/dashboard/net-salary-trend/route.ts
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import { NextRequest, NextResponse } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { requireAuth } from "@/lib/auth";
 
-// Caching
 const trendCache = new Map<string, { data: any; timestamp: number }>();
 const CACHE_DURATION = 5 * 60 * 1000;
 
@@ -15,64 +13,59 @@ function getTrendCacheKey(year: string | null): string {
 
 export async function GET(request: NextRequest) {
   const startTime = Date.now();
-  
+
   try {
     await requireAuth();
 
     const searchParams = request.nextUrl.searchParams;
     const year = searchParams.get("year");
 
-    // Check cache
     const cacheKey = getTrendCacheKey(year);
     const cached = trendCache.get(cacheKey);
     if (cached && Date.now() - cached.timestamp < CACHE_DURATION) {
-      console.log(`[Cache HIT] ${cacheKey}`);
       return NextResponse.json(cached.data);
     }
 
     console.time('Query-Trend');
 
-    const whereConditions: any = { komponen: "Net Salary" };
-
+    const whereConditions: any = {};
     if (year && year !== "(All)") {
       whereConditions.bulanReport = { contains: year };
     }
 
-    const salaryData = await prisma.employeeComponent.findMany({
+    // ✅ Fetch all records, extract Net Salary from JSON
+    const records = await prisma.employeeComponent.findMany({
       where: whereConditions,
-      select: {
-        nilai: true,
-        bulanReport: true,
-      },
+      select: { data: true, bulanReport: true },
     });
 
     console.timeEnd('Query-Trend');
 
     // Process in memory
     const monthlyTotals = new Map<string, { total: number; year: string }>();
-    
-    salaryData.forEach(item => {
-      const salary = parseFloat(item.nilai || "0");
-      if (!isNaN(salary) && salary > 0 && item.bulanReport) {
-        const parts = item.bulanReport.split('-');
+
+    records.forEach(record => {
+      const d = record.data as any;
+      const salary = parseFloat(d['Net Salary'] || '0') || 0;
+
+      if (salary > 0 && record.bulanReport) {
+        const parts = record.bulanReport.split('-');
         if (parts.length >= 3) {
           const month = parts[1];
           const itemYear = parts[2];
           const key = `${month}-${itemYear}`;
-          
+
           if (!monthlyTotals.has(key)) {
             monthlyTotals.set(key, { total: 0, year: itemYear });
           }
-          
-          const current = monthlyTotals.get(key)!;
-          current.total += salary;
+          monthlyTotals.get(key)!.total += salary;
         }
       }
     });
 
-    const monthOrder = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 
-                        'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-    
+    const monthOrder = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+
     const result = Array.from(monthlyTotals.entries())
       .map(([key, data]) => {
         const [month, itemYear] = key.split('-');
@@ -89,13 +82,10 @@ export async function GET(request: NextRequest) {
         totalSalary: item.totalSalary,
       }));
 
-    // Cache result
     trendCache.set(cacheKey, { data: result, timestamp: Date.now() });
     if (trendCache.size > 100) {
       const oldestKey = trendCache.keys().next().value;
-      if (oldestKey) {
-        trendCache.delete(oldestKey);
-      }
+      if (oldestKey) trendCache.delete(oldestKey);
     }
 
     const duration = Date.now() - startTime;

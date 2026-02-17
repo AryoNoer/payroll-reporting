@@ -116,23 +116,16 @@ model Report {
 model EmployeeComponent {
   id          String   @id @default(cuid())
   employeeNo  String
-  komponen    String
-  nilai       String
-  remark      String?
-  remark2     String?
-  remark3     String?
   bulanReport String
   type        String   @default("HO")
+  data        Json     // All komponen as JSON: { "Name": "John", "Net Salary": "5000000", ... }
   uploadedBy  String
   uploadedAt  DateTime @default(now())
   user        User     @relation("EmployeeComponentUploads", fields: [uploadedBy], references: [id], onDelete: Cascade)
 
-  // ✅ Optimized indexes (5 essential, removed redundant ones for disk savings)
-  @@index([employeeNo])
-  @@index([uploadedBy])
+  @@unique([employeeNo, bulanReport, type])
   @@index([bulanReport, type])
-  @@index([komponen, bulanReport, type])
-  @@index([employeeNo, bulanReport])
+  @@index([uploadedBy])
   @@map("employee_components")
 }
 
